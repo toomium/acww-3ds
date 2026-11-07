@@ -1,3 +1,7 @@
+A patch to melonDS (https://melonds.kuribo64.net), for the --oracle build only (docs/host.md). It changes
+melonDS's GPL-3.0 sources and is under melonDS's licence (GPL-3.0), not the project's MIT licence.
+git apply skips these lines.
+
 diff --git a/src/ARM.cpp b/src/ARM.cpp
 index 827fcb0..f4827a1 100644
 --- a/src/ARM.cpp

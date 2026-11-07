@@ -47,6 +47,9 @@ You need a 3DS that runs homebrew (the Homebrew Launcher) and your own dump of t
 2. Copy `acww.3dsx` and your ROM, renamed to `game.nds`, to `sd:/3ds/acww/`.
 3. Start it from the Homebrew Launcher.
 
+The sound needs the 3DS's DSP firmware at `sd:/3ds/dspfirm.cdc`, which is not included: dump it from your own
+console with the DSP1 homebrew. Without it the game runs silently.
+
 The game saves to `sd:/3ds/acww/game.sav`, and the program's log goes to `log.txt` in the same folder.
 
 ### Controls
@@ -121,3 +124,7 @@ citro3d.
 The project's own work (sources, tools, documentation) is under the MIT licence, see [`LICENSE`](LICENSE). The game
 and its ROM belong to Nintendo and are not included; you need your own dump. This project is not affiliated with
 Nintendo.
+
+Third-party parts keep their own licences: `tools/ninja_syntax.py` (Apache-2.0) and `tools/host/melonds.patch`
+(a patch to melonDS, GPL-3.0; only for the `--oracle` test build, which then is GPL-3.0 as a whole). The 3DS build
+links devkitPro's libctru and citro3d, under their licences.
