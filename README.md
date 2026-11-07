@@ -75,7 +75,16 @@ Stacked fruit uses item codes the DS game doesn't have: a save with stacks in it
 
 ## Build
 
-With [devkitPro](https://devkitpro.org/wiki/Getting_Started)'s 3DS tools (`3ds-dev`, in `/opt/devkitpro`), Python 3
+The easiest way needs only [Docker](https://docs.docker.com/get-docker/) and this repository (download it as a ZIP
+or clone it). In its folder:
+
+```
+sh tools/build_3ds_docker.sh                  # build/host3ds_direct_usa/acww.3dsx
+```
+
+It builds in devkitPro's Docker image and doesn't need the ROM. On Windows, run it in WSL.
+
+Without Docker, with [devkitPro](https://devkitpro.org/wiki/Getting_Started)'s 3DS tools (`3ds-dev`, in `/opt/devkitpro`), Python 3
 and Ninja:
 
 ```
