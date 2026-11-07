@@ -122,6 +122,15 @@ build/host64_usa/acww path/to/your/game.nds
 - `modern/ds/`: the runtime's game-side parts: the overlays, the second ROM for the languages.
 - `tools/configure_host.py`: every build's setup.
 
+## AI disclosure
+
+This port was written with the help of an AI model, Anthropic's Claude (through Claude Code): most of the code, the
+commit messages and this README. A human chose what to build, judged the results by eye and ear, and tested them on a
+New Nintendo 3DS. Much of the decompilation and PC port it builds on was also made with Claude, as the
+`Co-Authored-By` lines in its history show. Runs are deterministic and changes were checked against reference captures
+and byte-for-byte comparisons where they could be (see [`docs/host.md`](docs/host.md)), but expect AI-written code:
+read it before you rely on it.
+
 ## Credits
 
 This builds on [acww-decomp](https://github.com/7ucina/acww-decomp) by Lucina and its contributors: the decompilation
