@@ -43,7 +43,8 @@ You need a 3DS that runs homebrew (the Homebrew Launcher) and your own dump of t
 | ----------- | --------- | ------------------------------------------ |
 | USA (Rev 1) | `ADME`    | `77fde3e30e1e6068395d1f96ea63be569b61c351` |
 
-1. Download `acww.3dsx` from the [Releases](../../releases) page (or build it, below).
+1. Build `acww.3dsx` yourself (see [Build](#build)). No ready-made `.3dsx` is provided: it would contain the
+   game's compiled code.
 2. Copy `acww.3dsx` and your ROM, renamed to `game.nds`, to `sd:/3ds/acww/`.
 3. Start it from the Homebrew Launcher.
 
