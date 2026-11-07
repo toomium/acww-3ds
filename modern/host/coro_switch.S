@@ -4,6 +4,7 @@
 //   x86-64 Windows:  xmm6-xmm15 (160 bytes), the TIB's StackLimit, StackBase and DeallocationStack, r15 r14 r13 r12
 //                    rdi rsi rbx rbp, return address (256 bytes)
 //   arm64:  x19-x28, x29 (fp), x30 (lr), d8-d15
+//   arm (32-bit, AAPCS with VFP): d8-d15, r4-r11, r12 (only to keep the stack 8-byte aligned), lr
 // host_coro_prepare (coro.c) builds the same frame on a new stack with host_coro_boot as the return address and
 // fn / arg in callee-saved registers, which host_coro_boot passes on.
 
@@ -105,6 +106,31 @@ SYM(host_coro_boot):
     mov x0, x20
     blr x19
     brk #0
+
+#elif defined(__arm__)
+
+    .syntax unified
+    .arm
+    .fpu vfp
+
+    .globl SYM(host_coro_switch)
+    .type SYM(host_coro_switch), %function
+SYM(host_coro_switch):
+    push {r4-r12, lr}
+    vpush {d8-d15}
+    str sp, [r0]
+    mov sp, r1
+    vpop {d8-d15}
+    pop {r4-r12, lr}
+    bx lr
+
+// r4 = fn, r5 = arg
+    .globl SYM(host_coro_boot)
+    .type SYM(host_coro_boot), %function
+SYM(host_coro_boot):
+    mov r0, r5
+    blx r4
+    bkpt #0
 
 #elif !(defined(__x86_64__) && defined(_WIN32))
 #error "coro_switch.S: no stack switch for this CPU yet"

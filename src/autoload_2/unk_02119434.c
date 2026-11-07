@@ -211,6 +211,10 @@ s32 FSi_ReadFileCore(FSFile *file, void *dst, s32 len, BOOL async) {
 // FS_ConvertPathToFileID
 BOOL FS_ConvertPathToFileID(FSFileID *id, const char *path) {
     FSFile tmp;
+#ifdef N3DS_DIRECT  // (the enhanced port: a file of the chosen language from the EUR ROM, modern/ds/n3ds_lang.c)
+    extern BOOL N3ds_LangFileID(FSFileID *id, const char *path);
+    if (N3ds_LangFileID(id, path)) return 1;
+#endif
     FS_InitFile(&tmp);
     return FSi_FindPath(&tmp, path, id, 0) ? 1 : 0;
 }

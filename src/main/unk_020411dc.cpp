@@ -38,6 +38,13 @@ u16 sIrisWipeTableB[0x60];
 
 extern BgmManager *data_021c1b3c;
 
+#ifdef N3DS_DIRECT
+// The enhanced port draws the iris itself, over the whole wide screens: the progress
+// given at V-blank for the next frame (0 open, 0x1000 closed; -1 none). Window 0 changed every line is left out: it
+// made the 2D a piece a line (slow) and left the margins black.
+extern "C" void gpu2d_iris(int progress);  // (modern/host/gpu2d)
+#endif
+
 extern "C" {
 void MIi_CpuClear16(u16 v, void *dst, u32 size);
 s32 FX_Div(s32, s32);
@@ -125,6 +132,12 @@ extern "C" void IrisWipe_SetupLayers() {
     Unk_02041104_Fill(0x1111, G2S_GetBG2CharPtr(), 0x20);
     Unk_02041104_Fill(0x8000, (void *)(HW_PLTT + 0x400), 4);  // the sub screen's
     Gfx2d_ShowSubPlanes(4);
+#ifdef N3DS_DIRECT  // (no window; the black BG2 hidden, as inside the window)
+    Gfx2d_DisableMainWindows(1);
+    Gfx2d_DisableSubWindows(1);
+    Gfx2d_HideMainPlanes(4);
+    Gfx2d_HideSubPlanes(4);
+#endif
 }
 
 extern "C" void IrisWipe_Begin() {
@@ -134,13 +147,18 @@ extern "C" void IrisWipe_Begin() {
     MIi_CpuClear16(z, sIrisWipeTableB, sizeof sIrisWipeTableB);
     sIrisWipeActiveTable = sIrisWipeTableA;
     IrisWipe_SetupLayers();
+#ifndef N3DS_DIRECT
     if (HBlank_Add(&sIrisWipeHBlankTask, IrisWipe_HBlank, IrisWipe_VBlankRegs, NULL) != 0) {
         sIrisWipeFlags |= 1;
     }
+#endif
     if (gScreenTransition.progress == 0x1000) Gfx2d_SetBrightness(0);
 }
 
 extern "C" void IrisWipe_End() {
+#ifdef N3DS_DIRECT
+    gpu2d_iris(-1);
+#endif
     Gfx2d_DisableMainWindows(1);
     Gfx2d_DisableSubWindows(1);
     if (sIrisWipeFlags & 1) {
@@ -187,6 +205,9 @@ extern "C" void IrisWipe_Update() {
 }
 
 extern "C" void IrisWipe_SwapTables() {
+#ifdef N3DS_DIRECT
+    gpu2d_iris(gScreenTransition.progress);
+#endif
     u32 v = sIrisWipeFlags;
     if (v & 2) {
         sIrisWipeActiveTable = sIrisWipeTableA;

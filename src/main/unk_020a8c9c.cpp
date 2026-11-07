@@ -26,6 +26,7 @@
 #include "proto/main/unk_02087e70.h"
 #include "proto/main/unk_020a8c9c.h"
 #include "proto/main/unk_020b2c50.h"
+#include "n3ds_ui.h"
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Classes from other files
@@ -541,10 +542,16 @@ void ChoiceWindow::flushRowColors() {
 
 void ChoiceWindow::showLayer() {
     Gfx2d_ShowMainPlanes(2);
+#ifdef N3DS_DIRECT  // (n3ds_ui.h: the choices, BG1, with the text box they belong to - TalkFrame_ShowBg - and their cursor)
+    if (gN3dsTalkBgShown) gpu2d_bg_anchor(0, 6, 1, N3DS_UI_BOTTOM);
+#endif
 }
 
 void ChoiceWindow::hideLayer() {
     Gfx2d_HideMainPlanes(2);
+#ifdef N3DS_DIRECT
+    if (gN3dsTalkBgShown) gpu2d_bg_anchor(0, 4, 1, N3DS_UI_BOTTOM);
+#endif
 }
 
 void ChoiceWindow::setScroll(s32 a, s32 b) {

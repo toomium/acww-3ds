@@ -16,6 +16,8 @@
 
 #include "plat.h"
 
+void host_plat_init(void) {}
+
 uint64_t host_plat_time_ns(void) {
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
@@ -77,6 +79,9 @@ int host_plat_thread_start(void (*fn)(void *), void *arg) {
     pthread_detach(t);
     return 1;
 }
+
+// (the system shares the cores between threads by itself)
+int host_plat_sampler_start(void (*fn)(void *), void *arg, int core1) { (void)core1; return host_plat_thread_start(fn, arg); }
 
 static size_t page_size(void) {
     static size_t page;

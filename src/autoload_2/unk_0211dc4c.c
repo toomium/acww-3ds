@@ -197,6 +197,21 @@ void CARDi_ReadRom(u32 cmd, u32 off, void *dst, u32 len, void (*cb)(void *), voi
     c->dst = (uptr)dst;
     c->len = len;
     if (cmd <= 3) MI_StopDma(cmd);
+#ifdef N3DS_DIRECT
+    {   // the enhanced port: the whole read from the ROM image at once (card.c), not page by
+        // page through the card's registers and DMA; then finished as the SDK finishes a read
+        extern void host_card_read(u32 addr, void *dst, u32 n);
+        host_card_read(c->src, (void *)c->dst, c->len);
+        c->src += c->len, c->dst += c->len, c->len = 0;
+        if (async) {
+            CARDi_SetTask(CARDi_ReadRomSyncCore);
+            return;
+        }
+        c->curThread = data_021fcc2c.current;
+        CARDi_ReadRomSyncCore(c);
+        return;
+    }
+#endif
     if (CARDi_TryReadCardDma(d)) {
         if (async) return;
         CARD_WaitRomAsync();
@@ -286,6 +301,29 @@ void CARDi_RequestStreamCommandCore(CARDCommon *c) {
     if (cb) cb(arg);
 }
 
+#ifdef N3DS_DIRECT
+// The enhanced port: a stream command on the save memory done at once in the host
+// (pxi7.c), not 256 bytes at a time through the ARM7 with a reply to wait for each, then finished as
+// CARDi_RequestStreamCommandCore finishes. An async one (on the card thread) finishes a millisecond later: the game
+// takes an async request that is done when it returns for a failed one (Backup_ReadAsync).
+void OS_Sleep(u32 msec);
+static void CARDi_StreamHost(CARDCommon *c) {
+    extern u32 pxi7_backup(uptr src, uptr dst, u32 len, u32 op, u32 total);
+    void (*cb)(void *) = c->callback;
+    void *arg = c->cbArg;
+    u32 irq;
+    c->cmd->result = pxi7_backup(c->src, c->dst, c->len, c->f2c, c->cmd->f18);
+    c->src += c->len, c->dst += c->len, c->len = 0;
+    if (c->curThread == &c->thread) OS_Sleep(1);  // (an async request: on the card thread, CARDi_SetTask)
+    irq = OS_DisableInterrupts();
+    c->flag &= ~0x4c;
+    OS_WakeupThread(&c->tq);
+    if (c->flag & 0x10) OS_WakeupThreadDirect(&c->thread);
+    OS_RestoreInterrupts(irq);
+    if (cb) cb(arg);
+}
+#endif
+
 // CARDi_RequestStreamCommand~ (src, dst, len, callback, arg, is_async, req_type, retry, mode)
 BOOL CARDi_RequestStreamCommand(uptr a, uptr b, u32 len, void (*cb)(void *), void *arg, BOOL async, u32 g, u32 h, u32 mode) {
     CARDCommon *const c = &data_021fec00;
@@ -303,6 +341,15 @@ BOOL CARDi_RequestStreamCommand(uptr a, uptr b, u32 len, void (*cb)(void *), voi
     c->f2c = g;
     c->f30 = h;
     c->f34 = mode;
+#ifdef N3DS_DIRECT
+    if (async) {  // (CARDi_StreamHost on the card thread)
+        CARDi_SetTask(CARDi_StreamHost);
+        return 1;
+    }
+    data_021fec00.curThread = data_021fcc2c.current;
+    CARDi_StreamHost(c);
+    return c->cmd->result == 0;
+#endif
     if (async) {
         CARDi_SetTask(CARDi_RequestStreamCommandCore);
         return 1;

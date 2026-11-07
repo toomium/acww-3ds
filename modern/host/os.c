@@ -36,6 +36,7 @@ void OSi_RescheduleThread(void);
 
 void host_deliver_irqs(void) {
     if (sInIrq) return;
+    HOST_PROF(PROF_GAME);  // (the handlers are the game's)
     for (;;) {
         u32 pending = host_irq_pending();
         if (!pending || sIrqDisabled) break;
@@ -167,6 +168,8 @@ void host_dump_threads(void (*backtrace)(uintptr_t *bp, uintptr_t sp)) {
         uintptr_t bp = sp[5];  // r15 r14 r13 r12 rbx rbp
 #elif defined(__i386__)
         uintptr_t bp = sp[3];  // edi esi ebx ebp
+#elif defined(__arm__)
+        uintptr_t bp = sp[23];  // d8-d15, r4-r10, r11
 #else
         uintptr_t bp = sp[10];  // x19..x28, x29
 #endif

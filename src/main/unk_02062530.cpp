@@ -1,4 +1,5 @@
 #include "types.h"
+#include "n3ds_options.h"
 #include "game/Unk_020dd30c_Buf.h"
 #include "talk/MsgStringBase.h"
 #include "talk/MsgStringAttr.h"
@@ -127,6 +128,9 @@ extern "C" void ItemInfo_CountHoldable();
 
 static inline u8 *Unk_02061e0c_Lookup(u32 v) {
     u32 i = v & 0xfff;
+#ifdef N3DS_DIRECT
+    i = n3ds_item_record(i);  // (n3ds_options.h: a fruit stack's record is its fruit's)
+#endif
     if (i >= 0x56e) i = 0x56d;
     return (u8 *)func_0206d86c(func_0206d79c(gItemInfo), i);
 }
@@ -152,11 +156,17 @@ extern "C" u32 ItemInfo_GetPrice(u16 *p);
 
 static inline u8 *Unk_02062024_Lookup(u32 v) {
     u32 i = v & 0xfff;
+#ifdef N3DS_DIRECT
+    i = n3ds_item_record(i);  // (n3ds_options.h: a fruit stack's record is its fruit's)
+#endif
     if (i >= 0x56e) i = 0x56d;
     return (u8 *)func_0206d86c(func_0206d794(gItemInfo), i);
 }
 
 extern "C" s32 ItemInfo_GetNameForm(u16 *);
+#ifdef N3DS_DIRECT
+extern "C" s32 N3ds_FtrNameForm(s32 i);  // (src/main/unk_02052b50.cpp)
+#endif
 
 extern "C" u16 *ItemInfo_GetName(u16 *p);
 
@@ -372,6 +382,9 @@ BOOL ItemName::setFromItem(u16 *p) {
         r->form = FtrInfo_GetNameForm();
         r->attrB = FtrInfo_GetNameAttrB(x);
         r->attrA = FtrInfo_GetNameAttrA(x);
+#ifdef N3DS_DIRECT
+        r->form = N3ds_FtrNameForm(x);
+#endif
         return TRUE;
     }
     return FALSE;

@@ -30,6 +30,7 @@ void gpu3d_reset(void);
 void gpu3d_write8(uint32_t addr, uint8_t value);
 void gpu3d_write16(uint32_t addr, uint16_t value);
 void gpu3d_write32(uint32_t addr, uint32_t value);
+void gpu3d_write32_n(uint32_t addr, const uint32_t *value, uint32_t n);  // n words to one address
 // the 3D engine's status and results: RDLINES_COUNT (0x04000320), GXSTAT, RAM_COUNT, the position and vector test
 // results, CLIPMTX_RESULT and VECMTX_RESULT (0x04000600-0x040006a3); word addresses
 uint32_t gpu3d_read32(uint32_t addr);
@@ -39,6 +40,18 @@ uint32_t gpu3d_read32(uint32_t addr);
 // commands that waited for it run. `bank`: VRAM banks A-I (the texture image slots are banks A-D, the palette
 // slots E-G as VRAMCNT maps them)
 void gpu3d_frame(const uint8_t *const bank[9]);
+// the VRAM's mapping generation (vram.c host_vram_generation): while it stays the same, the texture image and
+// palette slots (banks the CPU can't see) keep their contents, and the rasteriser doesn't gather them again
+void gpu3d_vram_generation(uint32_t generation);
+// 0: gpu3d_frame runs the geometry engine's frame but doesn't draw the picture (a frame the screens skip)
+void gpu3d_set_raster(int on);
+// The wide view (the 3DS's ACWW_WIDE=1, an experiment): polygons kept beyond the DS's screen, clipped at a picture of
+// (256 + 2 * GPU3D_WIDE_X) x (192 + 2 * GPU3D_WIDE_Y) with the DS's in its middle; their screen positions (hx, hy)
+// then not wrapped (negative in the margins). Only for a renderer that draws them there (gpu3d_pica.c's).
+enum { GPU3D_WIDE_X = 72, GPU3D_WIDE_Y = 24 };
+int gpu3d_wide_wanted(void);  // ACWW_WIDE set
+void gpu3d_set_wide(int on);
+int gpu3d_wide(void);
 // the picture the frame shows: 192 lines of 256 pixels, red bits 0-5, green 8-13, blue 16-21, alpha bits 24-28
 // (0-31; 0: no pixel), before BG0HOFS's scroll (the 2D renderer's BG0 input)
 const uint32_t *gpu3d_lines(void);
@@ -46,6 +59,12 @@ const uint32_t *gpu3d_lines(void);
 // given (a WGPUDevice and WGPUQueue) at `scale` times the DS's resolution; readback: gpu3d_lines has the picture
 // (read back every frame, at scale 1), else only gpu3d_wgpu_picture. 0 if this build can't
 int gpu3d_use_wgpu(void *device, void *queue, int scale, int readback);
+// the polygons drawn by the 3DS's GPU (gpu3d_pica.c) into the rasteriser's buffers; 0 if this build can't
+int gpu3d_use_pica(void);
+// 1: the pictures drawn for the 3DS GPU's compositing (pica_display.c) when they can be, not read back; the last
+// such picture (a C3D_Tex), NULL when the last one was read back into the frame buffer (gpu3d_lines)
+void gpu3d_pica_direct(int on);
+void *gpu3d_pica_picture(void);
 // the picture the frame shows, on the GPU: a WGPUTextureView of an R32Uint texture of 256 x 192 times the scale, in
 // gpu3d_lines' format
 void *gpu3d_wgpu_picture(void);

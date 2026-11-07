@@ -12,6 +12,9 @@
 #include <string.h>
 
 #include "snd7.h"
+#ifdef N3DS_DIRECT
+#include "../plat.h"
+#endif
 
 #define OS_TICK_CYCLES 64u               // the ARM7's OS tick: the 33.5 MHz bus clock / 64
 #define SND_INTERVAL (2728u * OS_TICK_CYCLES)
@@ -22,6 +25,17 @@ struct SNDSharedWork *snd7_shared;
 
 static u64 sNextTick = SND_START_DELAY;  // SND_StartIntervalTimer at the ARM7's start
 static int sTimerStopped;
+
+#ifdef N3DS_DIRECT
+// The enhanced port: the driver on a thread of its own (snd7_thread), clocked by the sound
+// it mixes for the DSP, as the DS's ARM7 runs beside the ARM9: the music goes on while the game's thread is held up
+// (a load, a slow frame). The game's thread hands over the command lists (snd7_receive) and passes the alarms'
+// messages on to the ARM9 (snd7_run); everything else here is the thread's.
+static u64 sClock;  // the thread's bus cycles: the sound mixed so far
+#define NOW() sClock
+#else
+#define NOW() host_cycles()
+#endif
 
 // ---- tables (ACWW's ARM7 program, 0x0238f1a8-0x0238f2f3; the BIOS pitch table is computed)
 static const s8 sLfoSinTable[33] = {0,  6,  12, 19, 25, 31,  37,  43,  49,  54,  60,  65,  71,  76,  81,  85, 90,
@@ -189,7 +203,7 @@ static void alarm_setup(int idx, u32 tick, u32 period, u32 id) {
 static void alarm_start(int idx) {
     struct SNDAlarm *a = &snd7_work.alarms[idx];
     // OS_SetAlarm(tick) fires after `tick`; OS_SetPeriodicAlarm(tick + now, period) first at tick + now
-    sAlarmDue[idx] = host_cycles() + (a->tick ? a->tick : 1) * OS_TICK_CYCLES;
+    sAlarmDue[idx] = NOW() + (a->tick ? a->tick : 1) * OS_TICK_CYCLES;
     a->enable = 1;
 }
 
@@ -201,11 +215,27 @@ static void alarm_stop(int idx) {
     }
 }
 
+#ifdef N3DS_DIRECT
+// (the messages to the ARM9 and the command lists from it, between the threads: a lock held for a copy)
+static int sLock;
+static void lock(void) { while (__atomic_exchange_n(&sLock, 1, __ATOMIC_ACQUIRE)) {} }
+static void unlock(void) { __atomic_store_n(&sLock, 0, __ATOMIC_RELEASE); }
+static u32 sOutbox[64];
+static int sOutboxCount;
+static void send_to_arm9(u32 word) {
+    lock();
+    if (sOutboxCount < 64) sOutbox[sOutboxCount++] = word;
+    unlock();
+}
+#else
+static void send_to_arm9(u32 word) { pxi7_send(word); }
+#endif
+
 static void alarms_run(u64 now) {
     for (int i = 0; i < SND_ALARM_COUNT; i++) {
         struct SNDAlarm *a = &snd7_work.alarms[i];
         while (a->enable && sAlarmDue[i] <= now) {
-            pxi7_send(7 | (u32)(i | a->id << 8) << 6);
+            send_to_arm9(7 | (u32)(i | a->id << 8) << 6);
             if (a->period == 0) { sAlarmDue[i] = ~0ull; break; }
             sAlarmDue[i] += a->period * OS_TICK_CYCLES;
         }
@@ -391,7 +421,7 @@ static void snd7_pass(BOOL update, u64 at) {
 void snd7_skip_pause(void) { sTimerStopped = 1; }
 void snd7_skip_resume(void) {
     sTimerStopped = 0;
-    sNextTick = host_cycles() + SND_START_DELAY;
+    sNextTick = NOW() + SND_START_DELAY;
 }
 
 static int sInit;
@@ -408,9 +438,57 @@ static void snd7_init(void) {
     spu_soundcnt = 0x8000 | 0x7f;  // SND_Enable, SND_SetOutputSelector(0, 0, 0, 0), SND_SetMasterVolume(0x7f)
 }
 
+#ifdef N3DS_DIRECT
+static struct SNDCommand *sInbox[64];  // (the lists handed over, for the thread's next pass)
+static int sInboxCount, sStarted;
+int frontend_audio_pump(void);  // (frontend_3ds.c: the DSP fed from the ring; the frames waiting to be played)
+enum { CHUNK = 256, LEVEL = 3 * 1024 };  // (output frames mixed at a time; mixed ahead of the DSP's playing)
+static void snd7_thread(void *arg) {
+    (void)arg;
+    while (!host_threads_quitting()) {
+        while (frontend_audio_pump() < LEVEL) {
+            lock();
+            int n = sInboxCount;
+            for (int i = 0; i < n && sMsgCount < 64; i++) sMsg[sMsgCount++] = sInbox[i];
+            sInboxCount = 0;
+            unlock();
+            if (n) snd7_pass(FALSE, sClock);
+            u64 end = sClock + CHUNK * 1024u;  // (1024 bus cycles an output frame: spu.c)
+            while (!sTimerStopped && sNextTick <= end) {
+                alarms_run(sNextTick);
+                sClock = sNextTick;
+                sNextTick += SND_INTERVAL;
+                snd7_pass(TRUE, sClock);
+            }
+            alarms_run(end);
+            spu_mix_until(end);
+            sClock = end;
+        }
+        host_plat_sleep_ms(2);
+    }
+    host_thread_stopped();
+}
+#endif
+
 // PXI tag 7 from the ARM9: a command list, or NULL = process now
 void snd7_receive(struct SNDCommand *list) {
     if (!sInit) snd7_init();
+#ifdef N3DS_DIRECT
+    if (list) {
+        lock();
+        if (sInboxCount < 64) sInbox[sInboxCount++] = list;
+        else fprintf(stderr, "snd7: command queue full\n");
+        unlock();
+    }
+    if (!sStarted) {
+        sStarted = 1;
+        // (ACWW_SOUND_CORE=1: on the 3DS's system core 1 first, off the GPU thread's core 2; not the default: it
+        // didn't pay on hardware)
+        int core1 = getenv("ACWW_SOUND_CORE") && atoi(getenv("ACWW_SOUND_CORE")) == 1;
+        if (!host_thread_start(snd7_thread, 0, core1 ? 2 : 1)) fprintf(stderr, "snd7: no thread for the sound\n");
+    }
+    return;
+#endif
     if (list) {
         if (sMsgCount < 64) sMsg[sMsgCount++] = list;
         else fprintf(stderr, "snd7: command queue full\n");
@@ -420,6 +498,9 @@ void snd7_receive(struct SNDCommand *list) {
 }
 
 u64 snd7_next_due(void) {
+#ifdef N3DS_DIRECT
+    return ~0ull;  // (the thread's own clock)
+#endif
     u64 d = sTimerStopped ? ~0ull : sNextTick;
     for (int i = 0; i < SND_ALARM_COUNT; i++)
         if (snd7_work.alarms[i].enable && sAlarmDue[i] < d) d = sAlarmDue[i];
@@ -457,6 +538,18 @@ static void dump_state(void) {
 
 // from the host's event loop: the periodic passes and alarms due by now, and the audio up to now
 void snd7_run(u64 now) {
+#ifdef N3DS_DIRECT
+    (void)now;
+    u32 out[64];
+    lock();
+    int n = sOutboxCount;
+    memcpy(out, sOutbox, (size_t)n * sizeof *out);
+    sOutboxCount = 0;
+    unlock();
+    for (int i = 0; i < n; i++) pxi7_send(out[i]);
+    return;
+#endif
+    HOST_PROF(PROF_SOUND);
     if (!sInit) snd7_init();
     while (!sTimerStopped && sNextTick <= now) {
         alarms_run(sNextTick);

@@ -3,6 +3,7 @@
 #include "talk/MsgString33.h"
 #include "talk/MsgString9B.h"
 #include "types.h"
+#include "n3ds_options.h"
 #include "item/PocketMatches.h"
 #include "item/ItemId.h"
 #include "npc/VillagerId.h"
@@ -2049,7 +2050,30 @@ extern "C" void Pocket_SetFoundItem(u16 *a, s32 b) {
     Pocket_SetItem(v, r, b);
 }
 
+#ifdef N3DS_DIRECT
+// (n3ds_options.h)
+extern "C" int Pocket_FindFruitStack(u16 *a) {
+    PlayerInventory *inv = (PlayerInventory *)PlayerData_GetCurrent()->getInventory();
+    s32 f = n3ds_fruit_kind(*a);
+    if (!n3ds_stack_fruit() || n3ds_fruit_count(*a) != 1 || ((CommManager *)(gCommManager))->isOnline()) return -1;
+    for (s32 i = 0; i < 15; i++) {
+        u16 v = *inv->getPocket(i);
+        if (n3ds_fruit_kind(v) == f && n3ds_fruit_count(v) < N3DS_FRUIT_MAX && inv->getPocketFlags(i) == 0) return i;
+    }
+    return -1;
+}
+#endif
+
 extern "C" BOOL Pocket_AddFoundItem(u16 *a) {
+#ifdef N3DS_DIRECT
+    s32 k = Pocket_FindFruitStack(a);
+    if (k != -1) {  // onto the stack (stacked fruit, n3ds_options.h)
+        u16 v = *((PlayerInventory *)PlayerData_GetCurrent()->getInventory())->getPocket(k);
+        v = n3ds_fruit_make(n3ds_fruit_kind(v), n3ds_fruit_count(v) + 1);
+        Pocket_SetItem(&v, 0, k);
+        return TRUE;
+    }
+#endif
     s32 r = Pocket_FindEmpty();
     if (r == -1) return FALSE;
     if (*a == 0xfff1) return TRUE;
@@ -2078,11 +2102,19 @@ extern "C" void Pocket_RemoveItem(s32 c) {
     void *r4 = PlayerData_GetCurrent();
     if (Pocket_IsValidIndex(c)) {
         u16 t = 0xfff1;
+#ifdef N3DS_DIRECT
+        // a fruit stack (n3ds_options.h): one fruit went (Pocket_GetItem gave one), the rest stays
+        t = n3ds_fruit_rest(*((PlayerInventory *)(((PlayerData *)(r4))->getInventory()))->getPocket(c));
+#endif
         ((PlayerInventory *)(((PlayerData *)(r4))->getInventory()))->setPocket(&t, c, 0);
     }
 }
 
 extern "C" u16 Pocket_GetItem(s32 i) {
+#ifdef N3DS_DIRECT
+    // the NPCs take a pocket's item with this and Pocket_RemoveItem: of a fruit stack one fruit (n3ds_options.h)
+    return n3ds_fruit_one(*((PlayerInventory *)PlayerData_GetCurrent()->getInventory())->getPocket(i));
+#endif
     return *((PlayerInventory *)PlayerData_GetCurrent()->getInventory())->getPocket(i);
 }
 

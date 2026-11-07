@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "gpu3d_internal.h"
+#include "../prof.h"
 
 // ---- state
 static int sGeomOn, sRenderOn;          // POWCNT1 bits 3 and 2
@@ -40,21 +41,47 @@ static u32 sPolyAttr, sCurPolyAttr, sTexParam, sTexPal;
 static u32 sViewport[6];                // x1, y1 (from the top), x2, y2, width, height
 static int sPolyType;                   // BEGIN_VTXS: 0 triangles, 1 quads, 2 triangle strip, 3 quad strip
 static int sInBegin;
-static G3Vertex sTemp[4];               // the vertices of the polygon being set up
+static G3Vertex sTempBuf[4];            // the vertices of the polygon being set up, in the order of sTemp (a strip's
+static G3Vertex *sTemp[4] = {&sTempBuf[0], &sTempBuf[1], &sTempBuf[2], &sTempBuf[3]};  // next polygon: turned)
 static int sVtxCount, sVtxInPoly, sStripPolys;
 static G3Vertex *sStripRam[2];          // a strip's last two vertices in vertex RAM
 static int sStripValid;                 // ... if the next polygon can share them
 static s32 sPosResult[4];
 static s16 sVecResult[3];
 
-// the two banks of vertex and polygon RAM: one filled by the geometry engine, one drawn
-static G3Vertex sVertexRam[2][MAX_VERTICES];
-static G3Polygon sPolyRam[2][MAX_POLYGONS];
+// the two banks of vertex and polygon RAM: one filled by the geometry engine, one drawn (the direct build: the GPU's
+// vertex lists instead, gpu3d_pica.c)
+#ifdef N3DS_DIRECT
+enum { RAM_VERTICES = 1, RAM_POLYGONS = 1 };
+#else
+enum { RAM_VERTICES = MAX_VERTICES, RAM_POLYGONS = MAX_POLYGONS };
+#endif
+static G3Vertex sVertexRam[2][RAM_VERTICES];
+static G3Polygon sPolyRam[2][RAM_POLYGONS];
 static int sBank;
 static int sNumVerts, sNumPolys, sNumOpaque;
 static int sRamOverflow;
 G3RenderState gG3Render;
 const uint8_t *const *gG3Banks;
+u32 gG3VramGeneration = ~0u;
+u32 gG3Swaps;
+void gpu3d_vram_generation(uint32_t generation) { gG3VramGeneration = generation; }
+static int sRaster = 1;
+void gpu3d_set_raster(int on) { sRaster = on; }
+// the wide view: the x and y clip planes at +-num/den w (1/1: the DS's)
+static int sWide;
+static s64 sClipNum[3] = {1, 1, 1}, sClipDen[3] = {1, 1, 1};
+#ifdef N3DS_DIRECT  // (the enhanced port: on unless ACWW_WIDE=0)
+int gpu3d_wide_wanted(void) { return !getenv("ACWW_WIDE") || atoi(getenv("ACWW_WIDE")); }
+#else
+int gpu3d_wide_wanted(void) { return getenv("ACWW_WIDE") && atoi(getenv("ACWW_WIDE")); }
+#endif
+void gpu3d_set_wide(int on) {
+    sWide = on;
+    sClipNum[0] = on ? 128 + GPU3D_WIDE_X : 1, sClipDen[0] = on ? 128 : 1;
+    sClipNum[1] = on ? 96 + GPU3D_WIDE_Y : 1, sClipDen[1] = on ? 96 : 1;
+}
+int gpu3d_wide(void) { return sWide; }
 
 // ---- feature census
 static u64 sFeatureFrame[F_COUNT];
@@ -62,6 +89,15 @@ static u64 sFrame;
 static int sFeaturesOn = -1;
 void g3_feature(int id) {
     if (sFeaturesOn && !sFeatureFrame[id]) sFeatureFrame[id] = sFrame + 1;
+}
+// (the check inline: the census is mostly off, and some features are noted for every vertex)
+#define g3_feature(id) (sFeaturesOn ? g3_feature(id) : (void)0)
+
+// a 64-bit division as C's, in 32 bits when both fit (the same quotient: 64-bit divisions are many times slower on
+// the 3DS's CPU, which has no divide instruction at all)
+static inline s64 div64(s64 a, s64 b) {
+    if (a == (s32)a && b == (s32)b && b != -1) return (s32)a / (s32)b;
+    return a / b;
 }
 
 // ---- the command FIFO: a 4-entry pipe in front of a 256-entry FIFO (GXSTAT counts the FIFO's entries)
@@ -84,8 +120,14 @@ static int is_command(u8 c) {
            c == 0x41 || c == 0x50 || c == 0x60 || (c >= 0x70 && c <= 0x72);
 }
 
+static void exec_entry(Entry e);
 static void fifo_put(u8 cmd, u32 param) {
     Entry e = {cmd, param};
+    // nothing queued and nothing holding it back: run at once, as the drain after the write (gpu3d_write32) would
+    if (!sPipeN && !sFifoN && sGeomOn && !sFlushPending) {
+        exec_entry(e);
+        return;
+    }
     if (cmd == 0x11 || cmd == 0x12) sPushPopQueued++;
     if (cmd >= 0x70 && cmd <= 0x72) sTestQueued++;
     if (sFifoN == 0 && sPipeN < 4) {
@@ -267,11 +309,17 @@ static void mtx_trans(Mtx *cur, const s32 *p) {
     for (int j = 0; j < 4; j++)
         cur->m[12 + j] += (s32)(((s64)p[0] * cur->m[j] + (s64)p[1] * cur->m[4 + j] + (s64)p[2] * cur->m[8 + j]) >> 12);
 }
+#ifdef N3DS_DIRECT
+static int sSeg = -1;  // the id of sClip in the list being filled (g3p_matrix), -1 none yet
+#endif
 static void update_clip(void) {
     if (!sClipDirty) return;
     sClip = sProj;
     mtx_mult(&sClip, &sPos);  // clip = position * projection
     sClipDirty = 0;
+#ifdef N3DS_DIRECT
+    sSeg = -1;
+#endif
 }
 
 // the matrix (or matrices) a command of the current mode changes: mode 0 projection, 1 position, 2 position and
@@ -367,7 +415,9 @@ static void light_vector(u32 p) {
         sLightDir[l][i] = (s16)((((s64)d[0] * sVec.m[i] + (s64)d[1] * sVec.m[4 + i] + (s64)d[2] * sVec.m[8 + i]) >> 12) >> 3);
     sLightParam[l] = p;
     for (int i = 0; i < 9; i++) sLightVec[l][i] = sVec.m[(i / 3) * 4 + i % 3];
-    if (getenv("ACWW_GPU3D_LIGHTLOG"))
+    static int lightLog = -1;
+    if (lightLog < 0) lightLog = getenv("ACWW_GPU3D_LIGHTLOG") != 0;
+    if (lightLog)
         fprintf(stderr, "light %d param %08x dir %d %d %d vec %d %d %d / %d %d %d / %d %d %d -> %d %d %d\n", l, p, d[0], d[1],
                 d[2], sVec.m[0], sVec.m[1], sVec.m[2], sVec.m[4], sVec.m[5], sVec.m[6], sVec.m[8], sVec.m[9], sVec.m[10],
                 sLightDir[l][0], sLightDir[l][1], sLightDir[l][2]);
@@ -443,8 +493,8 @@ static void lighting(void) {
 
 // ---- polygons
 static s64 floor_div(s64 a, s64 b) {
-    s64 q = a / b;
-    return (a % b != 0 && (a < 0) != (b < 0)) ? q - 1 : q;
+    s64 q = div64(a, b);
+    return (q * b != a && (a < 0) != (b < 0)) ? q - 1 : q;
 }
 // the viewport transform (GBATEK "DS 3D Viewport"): x = (x + w) * width / 2w + x1, y the same from the bottom; W and
 // the coordinate are first shifted right once when W has more than 16 bits
@@ -455,10 +505,13 @@ static void screen_position(G3Vertex *v) {
     s64 ws = w >> s;
     if (ws == 0) ws = 1;  // (a point at the eye)
     s64 nx = ((s64)v->pos[0] + w) >> s, ny = (-(s64)v->pos[1] + w) >> s;
-    v->x = (s32)(floor_div(nx * sViewport[4], ws * 2) + sViewport[0]) & 0x1ff;
-    v->y = (s32)(floor_div(ny * sViewport[5], ws * 2) + sViewport[3]) & 0x1ff;  // (192 for the bottom edge: no 8-bit wrap)
-    v->hx = (s32)(floor_div(nx * sViewport[4] * 16, ws * 2) + sViewport[0] * 16) & 0x1fff;
-    v->hy = (s32)(floor_div(ny * sViewport[5] * 16, ws * 2) + sViewport[3] * 16) & 0x1fff;
+    // (the whole pixels from the 1/16 ones: floor(floor(16 r) / 16) = floor(r), so two divisions, not four)
+    s64 hx = floor_div(nx * sViewport[4] * 16, ws * 2) + sViewport[0] * 16;
+    s64 hy = floor_div(ny * sViewport[5] * 16, ws * 2) + sViewport[3] * 16;
+    v->x = (s32)(hx >> 4) & 0x1ff;
+    v->y = (s32)(hy >> 4) & 0x1ff;  // (192 for the bottom edge: no 8-bit wrap)
+    v->hx = sWide ? (s32)hx : (s32)hx & 0x1fff;
+    v->hy = sWide ? (s32)hy : (s32)hy & 0x1fff;
     v->screenDone = 1;
 }
 
@@ -466,20 +519,21 @@ static void screen_position(G3Vertex *v) {
 // interpolated from the vertex inside
 static G3Vertex sClipBuf[2][10];
 static void clip_interp(G3Vertex *o, const G3Vertex *in, const G3Vertex *out, int comp, int sign) {
-    s64 din = (s64)in->pos[3] - sign * (s64)in->pos[comp];
-    s64 dout = (s64)out->pos[3] - sign * (s64)out->pos[comp];
+    s64 num = sClipNum[comp], dn = sClipDen[comp];  // (the plane c = sign num/dn w; the DS's: 1/1)
+    s64 din = num * in->pos[3] - sign * dn * in->pos[comp];
+    s64 dout = num * out->pos[3] - sign * dn * out->pos[comp];
     s64 den = din - dout;
     // from the vertex outside towards the one inside, truncated towards zero (dout <= 0 < din: -dout / den >= 0)
-#define LERP(a, b) ((s32)((b) + (((s64)(a) - (b)) * -dout) / den))
+#define LERP(a, b) ((s32)((b) + div64(((s64)(a) - (b)) * -dout, den)))
     for (int i = 0; i < 4; i++) o->pos[i] = LERP(in->pos[i], out->pos[i]);
-    o->pos[comp] = sign * o->pos[3];
+    o->pos[comp] = sign * (s32)(num * o->pos[3] / dn);
     {   // (the 5-bit colours from the vertex inside, rounded up; when that vertex is the crossing of the same edge
         // with this axis's other plane, from the edge's far end instead: fitted to melonDS)
         const s32 *ic = in->color;
         s64 cdin = din, cden = den;
         if (in->farAxis == comp + 1) {
             ic = in->farColor;
-            cdin = (s64)in->farPos[3] - sign * (s64)in->farPos[comp];
+            cdin = num * in->farPos[3] - sign * dn * in->farPos[comp];
             cden = cdin - dout;
         }
         for (int i = 0; i < 3; i++) {  // (from the larger colour towards the smaller by a factor rounded up to 16
@@ -487,7 +541,7 @@ static void clip_interp(G3Vertex *o, const G3Vertex *in, const G3Vertex *out, in
             s64 a = ic[i] >> 4, b = out->color[i] >> 4, base, diff, n;
             if (a >= b) base = a, diff = a - b, n = cdin;
             else base = b, diff = b - a, n = cden - cdin;  // (towards the inside vertex: -dout)
-            s64 t = (n * 65536 + cden - 1) / cden;
+            s64 t = div64(n * 65536 + cden - 1, cden);
             s64 v = base * 65536 - diff * t;
             s32 c = (s32)(-((-v) >> 16));
             o->color[i] = c ? c << 4 | 0xf : 0;
@@ -506,7 +560,8 @@ static void clip_interp(G3Vertex *o, const G3Vertex *in, const G3Vertex *out, in
     o->screenDone = 0;
 }
 static int inside(const G3Vertex *v, int comp, int sign) {
-    return sign > 0 ? v->pos[comp] <= v->pos[3] : v->pos[comp] >= -v->pos[3];
+    s64 c = sClipDen[comp] * v->pos[comp], w = sClipNum[comp] * v->pos[3];
+    return sign > 0 ? c <= w : c >= -w;
 }
 static int clip_plane(G3Vertex *dst, const G3Vertex *src, int n, int comp, int sign) {
     int m = 0;
@@ -520,22 +575,24 @@ static int clip_plane(G3Vertex *dst, const G3Vertex *src, int n, int comp, int s
     }
     return m;
 }
-// returns the number of vertices left in *out (0: nothing visible); *clipped if any plane cut the polygon
-static int clip_polygon(G3Vertex *in, int n, G3Vertex **out, int farClip, int *clipped) {
-    G3Vertex *a = sClipBuf[0], *b = sClipBuf[1];
-    memcpy(a, in, n * sizeof *a);
+// returns the number of vertices left in *out (0: nothing visible; *out NULL: the polygon as it came, no plane cut
+// it); *clipped if any plane cut it or it crosses the far plane. (The vertices are copied only when a plane cuts.)
+static int clip_polygon(G3Vertex *const *in, int n, G3Vertex **out, int farClip, int *clipped) {
+    G3Vertex *a = 0, *b = sClipBuf[1];
     *clipped = 0;
+    *out = 0;
     // the far plane: polygons crossing it are hidden unless attr bit 12
     for (int i = 0; i < n; i++)
-        if (a[i].pos[2] > a[i].pos[3]) {
+        if (in[i]->pos[2] > in[i]->pos[3]) {
             *clipped = 1;
             if (!farClip) { g3_feature(F_FARCLIP_HIDE); sFarHidden = 1; return 0; }
         }
     static int kPlanes[6][2] = {{2, 1}, {2, -1}, {1, 1}, {1, -1}, {0, 1}, {0, -1}};  // (z, then y, then x)
     {   // (experiment: ACWW_GPU3D_CLIPORDER=zZxXyY, lower case the far / right / top plane)
-        static int init;
-        const char *o = getenv("ACWW_GPU3D_CLIPORDER");
-        if (!init++ && o && strlen(o) == 6)
+        static int init;  // (read once: getenv here, for every clipped polygon, was much of the clipping's time)
+        const char *o = init ? 0 : getenv("ACWW_GPU3D_CLIPORDER");
+        init = 1;
+        if (o && strlen(o) == 6)
             for (int i = 0; i < 6; i++) {
                 char c = o[i];
                 kPlanes[i][0] = (c | 0x20) == 'x' ? 0 : (c | 0x20) == 'y' ? 1 : 2;
@@ -545,9 +602,13 @@ static int clip_polygon(G3Vertex *in, int n, G3Vertex **out, int farClip, int *c
     for (int p = 0; p < 6; p++) {
         int comp = kPlanes[p][0], sign = kPlanes[p][1];
         int all = 1;
-        for (int i = 0; i < n; i++) if (!inside(&a[i], comp, sign)) { all = 0; break; }
+        for (int i = 0; i < n; i++) if (!inside(a ? &a[i] : in[i], comp, sign)) { all = 0; break; }
         if (all) continue;
         *clipped = 1;
+        if (!a) {
+            a = sClipBuf[0];
+            for (int i = 0; i < n; i++) a[i] = *in[i];
+        }
         n = clip_plane(b, a, n, comp, sign);
         G3Vertex *t = a; a = b; b = t;
         if (n == 0) return 0;
@@ -557,12 +618,12 @@ static int clip_polygon(G3Vertex *in, int n, G3Vertex **out, int farClip, int *c
 }
 
 // (diagnostics: ACWW_GPU3D_DEBUGTEX=<texparam hex>: every polygon with that texture, its outcome and vertices)
-static void debug_tex_poly(const char *what, const G3Vertex *v, int nv, int n) {
+static void debug_tex_poly(const char *what, G3Vertex *const *v, int nv, int n) {
     static long want = -2;
     if (want == -2) want = getenv("ACWW_GPU3D_DEBUGTEX") ? (long)strtoul(getenv("ACWW_GPU3D_DEBUGTEX"), 0, 16) : -1;
     if (want < 0 || (u32)want != sTexParam) return;
     fprintf(stderr, "debugtex frame %llu %s type %d n %d -> %d:", (unsigned long long)sFrame, what, sPolyType, nv, n);
-    for (int i = 0; i < nv; i++) fprintf(stderr, " (%d %d %d %d)", v[i].pos[0], v[i].pos[1], v[i].pos[2], v[i].pos[3]);
+    for (int i = 0; i < nv; i++) fprintf(stderr, " (%d %d %d %d)", v[i]->pos[0], v[i]->pos[1], v[i]->pos[2], v[i]->pos[3]);
     fprintf(stderr, "\n");
 }
 
@@ -570,17 +631,17 @@ static void submit_polygon(void) {
     sPolyDone = 1;
     sPolySerial++;
     int nv = sPolyType & 1 ? 4 : 3;
-    G3Vertex v[4];
+    G3Vertex *v[4];
     // the vertex order of the polygon: strips reuse the previous vertices
     if (sPolyType == 2 && (sStripPolys & 1)) { v[0] = sTemp[1]; v[1] = sTemp[0]; v[2] = sTemp[2]; }
     else if (sPolyType == 3) { v[0] = sTemp[0]; v[1] = sTemp[1]; v[2] = sTemp[3]; v[3] = sTemp[2]; }
-    else memcpy(v, sTemp, nv * sizeof *v);
+    else for (int i = 0; i < nv; i++) v[i] = sTemp[i];
 
     // facing: the sign of the determinant of (x, y, w) of the first three vertices (clip space)
-    s64 ax = v[1].pos[0] - v[0].pos[0], ay = v[1].pos[1] - v[0].pos[1], aw = v[1].pos[3] - v[0].pos[3];
-    s64 bx = v[2].pos[0] - v[0].pos[0], by = v[2].pos[1] - v[0].pos[1], bw = v[2].pos[3] - v[0].pos[3];
+    s64 ax = v[1]->pos[0] - v[0]->pos[0], ay = v[1]->pos[1] - v[0]->pos[1], aw = v[1]->pos[3] - v[0]->pos[3];
+    s64 bx = v[2]->pos[0] - v[0]->pos[0], by = v[2]->pos[1] - v[0]->pos[1], bw = v[2]->pos[3] - v[0]->pos[3];
     s64 nx = ay * bw - aw * by, ny = aw * bx - ax * bw, nw = ax * by - ay * bx;
-    s64 dot = nx * v[0].pos[0] + ny * v[0].pos[1] + nw * v[0].pos[3];
+    s64 dot = nx * v[0]->pos[0] + ny * v[0]->pos[1] + nw * v[0]->pos[3];
     int facing = dot >= 0;  // front: the vertices clockwise on the screen
     u32 attr = sCurPolyAttr;
     int culled = facing ? !(attr & 0x80) : !(attr & 0x40);
@@ -594,6 +655,28 @@ static void submit_polygon(void) {
         return;
     }
 
+#ifdef N3DS_DIRECT
+    {   // the direct build: the polygon straight into the GPU's list (g3p_polygon), which clips it; here only the DS's
+        // far-plane rule (crossing it: hidden unless attr bit 12) and what lies wholly beyond the near or far plane
+        int far = 0, near = 0;
+        for (int i = 0; i < nv; i++) {
+            far += v[i]->pos[2] > v[i]->pos[3];
+            near += v[i]->pos[2] < -v[i]->pos[3];
+        }
+        if ((far && !(attr & 0x1000)) || far == nv || near == nv) {
+            sPolyOutcome = far ? 3 : 2;
+            return;
+        }
+        if (sNumPolys >= MAX_POLYGONS) { sPolyOutcome = 5; return; }
+        u32 alpha = attr >> 16 & 31;
+        int fmt = sTexParam >> 26 & 7;
+        g3p_polygon(v, nv, attr, sTexParam, sTexPal, (alpha > 0 && alpha < 31) || fmt == 1 || fmt == 6,
+                    sFlushParam >> 1 & 1);
+        sNumPolys++;
+        sNumVerts += nv;
+        return;
+    }
+#endif
     G3Vertex *cv;
     int clipped;
     sFarHidden = 0;
@@ -602,7 +685,7 @@ static void submit_polygon(void) {
     debug_tex_poly(n ? "kept" : "clipped away", v, nv, n);
     sPolyNOut = n;
     sPolyClipped = clipped;
-    { static int dbg = -1; if (dbg < 0) dbg = getenv("ACWW_GPU3D_DEBUGPOLY") ? atoi(getenv("ACWW_GPU3D_DEBUGPOLY")) : 0; if (dbg > 0) { dbg--; fprintf(stderr, "poly attr %08x n %d -> %d clipped %d:", attr, nv, n, clipped); for (int i = 0; i < nv; i++) fprintf(stderr, " (%d %d %d %d)", v[i].pos[0], v[i].pos[1], v[i].pos[2], v[i].pos[3]); fprintf(stderr, "\n"); } }
+    { static int dbg = -1; if (dbg < 0) dbg = getenv("ACWW_GPU3D_DEBUGPOLY") ? atoi(getenv("ACWW_GPU3D_DEBUGPOLY")) : 0; if (dbg > 0) { dbg--; fprintf(stderr, "poly attr %08x n %d -> %d clipped %d:", attr, nv, n, clipped); for (int i = 0; i < nv; i++) fprintf(stderr, " (%d %d %d %d)", v[i]->pos[0], v[i]->pos[1], v[i]->pos[2], v[i]->pos[3]); fprintf(stderr, "\n"); } }
     if (clipped) g3_feature(F_CLIP);
     // a strip's polygon hidden by the far plane still leaves a polygon of the two vertices it shares with the
     // previous one (fitted to melonDS)
@@ -628,7 +711,7 @@ static void submit_polygon(void) {
         return;
     }
     G3Polygon *poly = &sPolyRam[sBank][sNumPolys];
-    memset(poly, 0, sizeof *poly);
+    memset(poly, 0, offsetof(G3Polygon, orig));  // (orig, the diagnostics' copy, is read only up to norig)
     poly->index = sNumPolys;
     G3Vertex *ram = sVertexRam[sBank];
     if (phantom) {  // (the two in the order the polygon has them: odd triangles newer first)
@@ -643,7 +726,7 @@ static void submit_polygon(void) {
         G3Vertex *at[4];
         for (int k = 0; k < nv; k++) {
             if (k < shared) at[k] = sStripRam[k];
-            else { at[k] = &ram[sNumVerts++]; *at[k] = sTemp[k]; }
+            else { at[k] = &ram[sNumVerts++]; *at[k] = *sTemp[k]; }
         }
         for (int i = 0; i < n; i++) poly->v[i] = at[ord[i]];
         if (strip) {
@@ -717,8 +800,9 @@ static void submit_polygon(void) {
             poly->z[i] = (s32)(z > 0xffffff ? 0xffffff : z);
         }
     }
-    poly->norig = nv;
-    memcpy(poly->orig, v, sizeof(G3Vertex) * nv);
+    poly->norig = gG3Diagnostics ? nv : 0;  // (the vertices before clipping: for the comparisons' reports only)
+    if (gG3Diagnostics)
+        for (int i = 0; i < nv; i++) poly->orig[i] = *v[i];
     poly->vtop = vtop;
     poly->vbottom = vbot;
     poly->ytop = ytop;
@@ -749,11 +833,17 @@ static void submit_polygon(void) {
 
 static void submit_vertex(void) {
     if (!sInBegin) return;
+    HOST_PROF(PROF_VERTEX);
     update_clip();
-    G3Vertex *v = &sTemp[sVtxInPoly];
+    G3Vertex *v = sTemp[sVtxInPoly];
     s64 x = sVtx[0], y = sVtx[1], z = sVtx[2];
     for (int i = 0; i < 4; i++)
         v->pos[i] = (s32)((x * sClip.m[i] + y * sClip.m[4 + i] + z * sClip.m[8 + i] + 0x1000 * (s64)sClip.m[12 + i]) >> 12);
+#ifdef N3DS_DIRECT
+    if (sSeg < 0) sSeg = g3p_matrix(sClip.m);
+    v->obj[0] = (s32)x, v->obj[1] = (s32)y, v->obj[2] = (s32)z, v->seg = (u16)sSeg;
+    g3p_vertex(sSeg, v->obj);
+#endif
     for (int i = 0; i < 3; i++) v->color[i] = sVtxColor[i] ? sVtxColor[i] << 4 | 0xf : 0;
     v->dbgLight = sCurLightRec;
     if ((sTexParam >> 30) == 3) {  // texture coordinates from the vertex
@@ -780,8 +870,10 @@ static void submit_vertex(void) {
         if (sVtxInPoly == 3) {
             submit_polygon();
             sStripPolys++;
+            G3Vertex *t = sTemp[0];  // (the next polygon shares the last two: turned, not copied)
             sTemp[0] = sTemp[1];
             sTemp[1] = sTemp[2];
+            sTemp[2] = t;
             sVtxInPoly = 2;
         }
         break;
@@ -789,8 +881,11 @@ static void submit_vertex(void) {
         if (sVtxInPoly == 4) {
             submit_polygon();
             sStripPolys++;
+            G3Vertex *t0 = sTemp[0], *t1 = sTemp[1];
             sTemp[0] = sTemp[2];
             sTemp[1] = sTemp[3];
+            sTemp[2] = t0;
+            sTemp[3] = t1;
             sVtxInPoly = 2;
         }
         break;
@@ -827,8 +922,8 @@ static void box_test(const u32 *p) {
     static const u8 kFaces[6][4] = {{0, 1, 3, 2}, {4, 5, 7, 6}, {0, 1, 5, 4}, {2, 3, 7, 6}, {0, 2, 6, 4}, {1, 3, 7, 5}};
     int in = 0;
     for (int f = 0; f < 6 && !in; f++) {
-        G3Vertex face[4], *out;
-        for (int k = 0; k < 4; k++) face[k] = c[kFaces[f][k]];
+        G3Vertex *face[4], *out;
+        for (int k = 0; k < 4; k++) face[k] = &c[kFaces[f][k]];
         int clipped;
         if (clip_polygon(face, 4, &out, 1, &clipped) > 0) in = 1;
     }
@@ -918,7 +1013,10 @@ static void execute(u8 cmd, const u32 *p) {
                 sTexCoord[i] = (s16)((((s64)sNormal[0] * sTex.m[i] + (s64)sNormal[1] * sTex.m[4 + i] +
                                        (s64)sNormal[2] * sTex.m[8 + i]) >> 24) + sTexRaw[i]);
         }
-        lighting();
+        {
+            HOST_PROF(PROF_LIGHT);
+            lighting();
+        }
         break;
     case 0x22:
         sTexRaw[0] = (s16)p[0];
@@ -1010,6 +1108,9 @@ static void execute(u8 cmd, const u32 *p) {
         sViewport[3] = (191 - (p[0] >> 24 & 0xff)) & 0xff;
         sViewport[4] = (sViewport[2] - sViewport[0] + 1) & 0x1ff;
         sViewport[5] = ((p[0] >> 24 & 0xff) - sViewport[1] + 1) & 0xff;
+#ifdef N3DS_DIRECT
+        g3p_viewport(sViewport);
+#endif
         break;
     case 0x70: g3_feature(F_BOX_TEST); box_test(p); break;
     case 0x71:
@@ -1034,6 +1135,10 @@ static void exec_entry(Entry e) {
     if (sExecCount >= need) {
         u8 c = (u8)sExecCmd;
         sExecCmd = -1;
+#ifdef N3DS_DIRECT  // (no busy time: GXSTAT never says busy, the game doesn't wait)
+        execute(c, sExecParams);
+        return;
+#endif
         timing_before(c);
         execute(c, sExecParams);
         timing_after(c);
@@ -1061,6 +1166,12 @@ static void do_swap(void) {
     if (r->wbuffer) g3_feature(F_WBUFFER);
     else if (r->npoly) g3_feature(F_ZBUFFER_POLYS);
     if (r->manualSort) g3_feature(F_MANUAL_SORT);
+#ifdef N3DS_DIRECT
+    r->list = g3p_swap();
+    r->npoly = 0;
+    sNumPolys = 0;
+    sSeg = -1;  // (the new list has no matrices yet)
+#endif
     for (int i = 0; i < sNumPolys; i++) {
         G3Polygon *p = &sPolyRam[sBank][i];
         if (r->manualSort && p->translucent) p->sortKey = 0x10000u;  // (translucent ones in submission order)
@@ -1082,6 +1193,7 @@ static void do_swap(void) {
     sNumPolys = sNumVerts = sNumOpaque = 0;
     sStripValid = 0;
     sFlushPending = 0;
+    gG3Swaps++;
 }
 
 // ---- the interface
@@ -1140,6 +1252,34 @@ void gpu3d_write32(uint32_t addr, uint32_t v) {
     drain();
 }
 
+void gpu3d_write32_n(uint32_t addr, const uint32_t *v, uint32_t n) {
+    uint32_t i = 0;
+#ifdef N3DS_DIRECT
+    // the direct build: a block for the GX FIFO decoded where it lies, each command run with its parameters in place.
+    // The FIFO only while a swap waits (the commands then wait in it) or when a packed word's parameters go on in the
+    // next block: from there word by word as below.
+    if (addr == 0x04000400 && sGeomOn && !sFlushPending && !sPackParamsLeft && !sPipeN && !sFifoN && sExecCmd < 0) {
+        while (i < n && !sFlushPending) {
+            u32 cmds = v[i], need = 0;
+            for (u32 c = cmds; c; c >>= 8) need += kParams[c & 0xff];
+            if (i + 1 + need > n) break;
+            i++;
+            for (int k = 0; cmds; k++, cmds >>= 8) {
+                u8 c = cmds & 0xff;
+                if (sFlushPending) {  // (SWAP_BUFFERS in this word: its other commands queue behind it)
+                    sPackCmds = cmds, sPackLeft = 4 - k;
+                    pack_advance();
+                    break;
+                }
+                if (c) execute(c, &v[i]);  // (00: a NOP)
+                i += kParams[c];
+            }
+        }
+    }
+#endif
+    for (; i < n; i++) gpu3d_write32(addr, v[i]);
+}
+
 static u32 gxstat(void) {
     u32 s = sGxStat & (2u | 0x8000u | 0xc0000000u);
     if (sTestQueued) s |= 1;
@@ -1189,11 +1329,12 @@ void gpu3d_frame(const uint8_t *const bank[9]) {
     if (sDispCnt & 128) g3_feature(F_FOG);
     if (sDispCnt & 0x4000) g3_feature(F_REAR_BITMAP);
     if (sFlushPending) {
+        g3_render_wait();  // (the list drawn from and its polygon RAM)
         do_swap();
         drain();
     }
     if (sDispCnt & 1) {}
-    g3_render();
+    if (sRaster) g3_render();
 }
 
 const uint32_t *gpu3d_lines(void) { return g3_frame_lines(); }

@@ -40,6 +40,12 @@
 #include "proto/main/unk_020637e4.h"
 #include "proto/ov002/unk_ov002_022025cc.h"
 #include "player/PlayerData.h"
+#ifdef N3DS_DIRECT
+#include "n3ds_ui.h"
+// the options button as a hand target in the tab row, left of the pockets' tab (0x10 is the scroll knob): a tab target
+// whose tab is N3DS_OPT_TAB
+#define MAP_OPT_TARGET 0x11
+#endif
 
 extern "C" {
 extern u16 gPad[];
@@ -1465,7 +1471,11 @@ void MapTab::showCursor() {
     if (cursorTarget >= 0xa && cursorTarget <= 0xf) {
         setListScrollTarget(listScroll & ~0xf);
     }
+#ifdef N3DS_DIRECT
+    if (cursorTarget <= 7 || cursorTarget == MAP_OPT_TARGET) {
+#else
     if (cursorTarget <= 7) {
+#endif
         ((MenuCursor *)&cursor)->setAnimIfChanged(0xd);
     } else {
         ((MenuCursor *)&cursor)->setAnimIfChanged(1);
@@ -1484,6 +1494,11 @@ s32 MapTab::getCursorTargetX() {
     if (c <= 7) {
         return MenuTabBar_GetTabX(c);
     }
+#ifdef N3DS_DIRECT
+    if (c == MAP_OPT_TARGET) {
+        return MenuTabBar_GetTabX(N3DS_OPT_TAB);
+    }
+#endif
     if (c == 8) {
         return 0xd8;
     }
@@ -1510,6 +1525,11 @@ s32 MapTab::getCursorTargetY() {
     if (c <= 7) {
         return 8;
     }
+#ifdef N3DS_DIRECT
+    if (c == MAP_OPT_TARGET) {
+        return 8;
+    }
+#endif
     if (c == 0x10) {
         return scrollKnob.getGripY();
     }
@@ -1572,6 +1592,11 @@ s32 MapTab::moveCursorByPad(u32 pad) {
             if (ACV != 0) {
                 ACV = ACV - 1;
             }
+#ifdef N3DS_DIRECT
+            else {
+                cursorTarget = MAP_OPT_TARGET;  // (from the pockets' tab onto the options button)
+            }
+#endif
         } else if (MenuKeys_HasRight(pad)) {
             if (ACV < 7) {
                 ACV = ACV + 1;
@@ -1610,6 +1635,19 @@ s32 MapTab::moveCursorByPad(u32 pad) {
             mapCursorY = ((MenuCursorBase *)&cursor)->getScreenY();
             return 2;
         }
+#ifdef N3DS_DIRECT
+    } else if (old == MAP_OPT_TARGET) {
+        // the options button: Right back onto the pockets' tab, Down into the map as from the pockets' tab
+        if (MenuKeys_HasDown(pad)) {
+            cursorTarget = 0;
+            mapCursorX = ((MenuCursorBase *)&cursor)->getScreenX();
+            mapCursorY = 0x30;
+            ((MenuCursor *)&cursor)->switchToAnim01();
+            return 2;
+        } else if (MenuKeys_HasRight(pad)) {
+            cursorTarget = 0;
+        }
+#endif
     } else if (old == 0x10) {
         if (MenuKeys_HasUp(pad)) {
             cursorTarget = 8;
@@ -1679,6 +1717,10 @@ s32 MapTab::onCursorDecide() {
             return 2;
         }
         return 0;
+#ifdef N3DS_DIRECT
+    } else if (s == MAP_OPT_TARGET) {
+        return requestTab(N3DS_OPT_TAB) ? 1 : 0;
+#endif
     } else if (s <= 7) {
         if (requestTab(s)) {
             return 1;

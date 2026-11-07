@@ -1,6 +1,16 @@
 #include "uptr.h"
 #include "host_shared_calls.h"
 #include "types.h"
+#include "n3ds_options.h"
+#ifdef N3DS_DIRECT
+#include "n3ds_ui.h"
+// the options button as a hand target in the tab row, left of the pockets' tab (0x26 and 0x27 are taken): a tab target
+// whose tab is N3DS_OPT_TAB
+#define POCKET_OPT_TARGET 0x28
+#define POCKET_TAB_OF(id) ((id) == POCKET_OPT_TARGET ? N3DS_OPT_TAB : (id) - 0x19)
+#else
+#define POCKET_TAB_OF(id) ((id) - 0x19)
+#endif
 #include "Unk_020d8c7c.h"
 #include "net/CommManager.h"
 #include "ui/UiWidget.h"
@@ -25,6 +35,7 @@
 #include "ui/HandCursor.h"
 #include "ui/HudController.h"
 #include "ui/LabelBalloon.h"
+#include "ui/LabelString.h"
 #include "ui/LabelButton.h"
 #include "ui/AddresseePageArg.h"
 #include "proto/autoload_2/unk_020e7fd4.h"
@@ -1012,7 +1023,7 @@ void PocketMenu::mainAct0F() {
 
 void PocketMenu::mainAct10() {
     if (m_2498.isAnimDone()) {
-        if (requestTab(cursorTarget - 0x19) == 0) {
+        if (requestTab(POCKET_TAB_OF(cursorTarget)) == 0) {
             releaseCursor();
         }
     }
@@ -1381,14 +1392,47 @@ void PocketMenu::mainAct32()
     }
 }
 
+#ifdef N3DS_DIRECT
+// Stacked fruit (n3ds_options.h): a stack dropped outside leaves one fruit (requestDropItem); once it is down, what stays
+// of the stack goes back into its pocket target t. FALSE if v was no stack (the game's own clearing then).
+static BOOL PocketMenu_KeepFruitRest(PocketMenu *s, u32 t, u32 v)
+{
+    if (n3ds_fruit_count(v) < 2) return FALSE;
+    PocketMenu_SetSlotItem(s, t, n3ds_fruit_rest(v), 0);
+    return TRUE;
+}
+
+// The pocket menu's "Take One" on a fruit stack (addItemOptions; one action more than the game's 0-0x21, 0x22 being
+// "Never Mind"): one fruit flies into an empty pocket, the rest stays (as actionTakeAttachment does with a letter's)
+#define N3DS_ACTION_TAKE_ONE 0x23
+static void PocketMenu_TakeOneFruit(PocketMenu *s)
+{
+    s32 r = PocketMenu_FindEmptyPocket(s);
+    u32 v = PocketMenu_GetItem(s, s->actionTarget);
+    if (r == 0x26 || n3ds_fruit_count(v) < 2) {
+        PocketMenu_ReturnToIdle(s);
+        PocketMenu_ShowMessage(s, 0xb, 0xff, 1);
+        return;
+    }
+    PocketMenu_SetSlotItem(s, s->actionTarget, n3ds_fruit_rest(v), 0);
+    PocketMenu_FlyItemTo(s, s->actionTarget, r, n3ds_fruit_one(v), 0);
+}
+#endif
+
 void PocketMenu::mainAct28()
 {
     switch (FieldAction_PollDrop(fieldRequest)) {
     case 1:
         if (testFlags(0x1000)) {
+#ifdef N3DS_DIRECT
+            if (!PocketMenu_KeepFruitRest(this, actionTarget, PocketMenu_GetItem(this, actionTarget)))
+#endif
             Shared_InventoryItemGrid_ClearSlot(&m_358, PocketMenu_TargetToGridIndex(this, actionTarget));
             PocketMenu_ReturnToIdle(this);
         } else {
+#ifdef N3DS_DIRECT
+            PocketMenu_KeepFruitRest(this, handSource, handItem);
+#endif
             clearHand();
             PocketMenu_ReturnToIdle(this);
         }
@@ -1633,6 +1677,11 @@ extern "C" u32 PocketMenu_IsTabTarget(PocketMenu *s, u32 id)
     if (id >= 0x19 && id <= 0x20) {
         return 1;
     }
+#ifdef N3DS_DIRECT
+    if (id == POCKET_OPT_TARGET) {
+        return 1;
+    }
+#endif
     return 0;
 }
 
@@ -1687,6 +1736,12 @@ extern "C" s32 PocketMenu_DropItemAt(PocketMenu *s, u32 id)
     if (PocketMenu_IsLetterTarget(s, id) && PocketMenu_IsSlotEmpty(s, id)) {
         return 0;
     }
+#ifdef N3DS_DIRECT
+    if (PocketMenu_IsLetterTarget(s, id) && n3ds_fruit_count(s->handItem) > 1) {  // no fruit stack into a letter
+        s->returnHand(1);
+        return 1;
+    }
+#endif
     if (PocketMenu_IsPocketTarget(s, id) || PocketMenu_IsLetterTarget(s, id)) {
         v = PocketMenu_GetItem(s, id);
         s->mergeItems((u16 *)(&s->handItem), s->handItemFlags, &v, PocketMenu_GetItemFlags(s, id));
@@ -1897,7 +1952,7 @@ extern "C" s32 PocketMenu_GetTargetX(PocketMenu *s, u32 id)
         return LetterGrid_GetSlotX(&s->m_db8, PocketMenu_TargetToLetterIndex(s, id));
     }
     if (PocketMenu_IsTabTarget(s, id)) {
-        return MenuTabBar_GetTabX(id - 0x19) - 8;
+        return MenuTabBar_GetTabX(POCKET_TAB_OF(id)) - 8;
     }
     if (PocketMenu_IsSpecialTarget(s, id)) {
         return InventoryItemGrid_GetSlotX(&s->m_358, PocketMenu_TargetToGridIndex(s, id));
@@ -2347,6 +2402,9 @@ s32 PocketMenu::dropHeldItem() {
         return 0;
     }
     if (r == 1) {
+#ifdef N3DS_DIRECT
+        PocketMenu_KeepFruitRest(this, handSource, handItem);
+#endif
         clearHand();
         return 1;
     }
@@ -2648,6 +2706,19 @@ s32 PocketMenu::mergeItems(u16 *a, s32 f, u16 *b, u8 g) {
     if (f != 0 || g != 0) {
         return 1;
     }
+#ifdef N3DS_DIRECT
+    // stacked fruit (n3ds_options.h): a fruit or stack onto one of its kind makes a stack, the rest (over the most)
+    // stays where the slot's was
+    if (n3ds_stack_fruit() && !gCommManager->isOnline() && n3ds_fruit_kind(*a) >= 0 &&
+        n3ds_fruit_kind(*a) == n3ds_fruit_kind(*b)) {
+        s32 n = n3ds_fruit_count(*a) + n3ds_fruit_count(*b), k = n3ds_fruit_kind(*a);
+        if (n3ds_fruit_count(*b) < N3DS_FRUIT_MAX && n3ds_fruit_count(*a) < N3DS_FRUIT_MAX) {
+            *a = n3ds_fruit_make(k, n > N3DS_FRUIT_MAX ? N3DS_FRUIT_MAX : n);
+            *b = n3ds_fruit_make(k, n > N3DS_FRUIT_MAX ? n - N3DS_FRUIT_MAX : 0);
+            return 0;
+        }
+    }
+#endif
     loc[0] = *a;
     loc[1] = *b;
     ok = FALSE;
@@ -2882,6 +2953,9 @@ BOOL PocketMenu::canDropItem(s32 a) {
 }
 
 s32 PocketMenu::requestDropItem(s32 a) {
+#ifdef N3DS_DIRECT
+    a = n3ds_fruit_one(a);  // of a fruit stack one fruit (the rest stays: PocketMenu_KeepFruitRest)
+#endif
     if (Unk_ov096_0229652c_IsZero(gFieldSceneKind)) {
         fieldRequest = FieldAction_RequestDrop(gCommManager->myAid, a);
         if (fieldRequest == -1) {
@@ -2912,6 +2986,9 @@ void PocketMenu::actionDropItem() {
                 setFlags(0x1000);
             } else {
                 s32 x = PocketMenu_TargetToGridIndex(this, t);
+#ifdef N3DS_DIRECT
+                if (!PocketMenu_KeepFruitRest(this, t, r6))
+#endif
                 Shared_InventoryItemGrid_ClearSlot(&m_358, x);
                 PocketMenu_ReturnToIdle(this);
             }
@@ -3131,6 +3208,12 @@ void PocketMenu::runChosenAction() {
         PocketMenu_ReturnToIdle(this);
         return;
     }
+#ifdef N3DS_DIRECT
+    if (chosenAction == N3DS_ACTION_TAKE_ONE) {
+        PocketMenu_TakeOneFruit(this);
+        return;
+    }
+#endif
     static Unk_ov096_0229aea8_Fn tbl[34] = {
         &PocketMenu::actionAct00, &PocketMenu::actionAct00,
         &PocketMenu::actionDropItem, &PocketMenu::actionReadLetter,
@@ -3236,6 +3319,13 @@ void PocketMenu::addItemOptions(s32 a) {
         if (canDropItem(a)) {
             ChoiceIdList_Add(optionList, Unk_ov096_0229590c_IsZero(gFieldSceneKind) ? 1 : 0xa, 2);
         }
+#ifdef N3DS_DIRECT
+        if (n3ds_fruit_count(a) > 1 && PocketMenu_FindEmptyPocket(this) != 0x26) {  // (PocketMenu_TakeOneFruit)
+            LabelString t;
+            t.set((u8 *)"Take One");
+            PocketMenu_Popup(this)->addCustomRow((PopupChoiceIdList *)optionList, &t, N3DS_ACTION_TAKE_ONE);
+        }
+#endif
         if (Unk_ov096_0229590c_IsZero(gFieldSceneKind)) {
             addFieldOptions(a);
         } else if (Scene_InHouseRoom()) {
@@ -3536,6 +3626,22 @@ void PocketMenu::moveCursorInLetters(u32 pad, s32 mode) {
 }
 
 void PocketMenu::moveCursorInTabs(u32 pad, s32 mode) {
+#ifdef N3DS_DIRECT
+    // the options button: Left from the pockets' tab, Right back to it, Down as from the pockets' tab
+    if (cursorTarget == POCKET_OPT_TARGET) {
+        if (MenuKeys_HasDown(pad)) {
+            cursorTarget = 0x25;
+            m_2498.switchToAnim01();
+        } else if (MenuKeys_HasRight(pad)) {
+            cursorTarget = 0x19;
+        }
+        return;
+    }
+    if (cursorTarget == 0x19 && MenuKeys_HasLeft(pad) && !MenuKeys_HasDown(pad)) {
+        cursorTarget = POCKET_OPT_TARGET;
+        return;
+    }
+#endif
     if (MenuKeys_HasLeft(pad)) {
         if (*(volatile u8 *)&cursorTarget > 0x19) {
             cursorTarget = cursorTarget - 1;

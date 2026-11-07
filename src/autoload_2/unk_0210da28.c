@@ -210,6 +210,16 @@ void NNS_SndArcStrmInit(u32 prio, void *heap)
 }
 
 // NNSi_SndArcStrmSetupBuffers-like (read channel tables, allocate stream buffers from heap)
+#ifdef N3DS_DIRECT
+// The enhanced port: the ARM7's sound runs on a thread of its own ahead of the game's,
+// whose answers to the stream's alarms come up to a frame late or later; with the DS's 2 KB a channel (blocks of
+// about 5 ms, refilled within 16 ms) most blocks were dropped as silence, so the buffers are 16 times as large (blocks
+// of about 86 ms at the title's 47605 Hz). The sound heap's block still marks the buffer's lifetime
+// (StrmBufDisposeCallback).
+static u8 sStrmBuf[4][6 << 15] __attribute__((aligned(32)));
+static void *sStrmHeapMem[4];
+#endif
+
 BOOL SetupStrmPlayers(void *heap)
 {
     s32 i;
@@ -231,6 +241,11 @@ BOOL SetupStrmPlayers(void *heap)
             mem = NNS_SndHeapAlloc(heap, size, StrmBufDisposeCallback, c, 0);
             if (mem == 0) return 0;
             ForceStopStrm__sndarc_stream(c);
+#ifdef N3DS_DIRECT
+            sStrmHeapMem[i] = mem;
+            mem = sStrmBuf[i];
+            size = c->numChannels << 15;
+#endif
             c->buffer = mem;
             c->bufSize = size;
         }
@@ -579,7 +594,11 @@ void FreeCommandBuffer(NNSSndStrmLoadCommand *job)
 void StrmBufDisposeCallback(void *mem, u32 size, void *arg, u32 unused)
 {
     NNSSndStrmPlayer *c = arg;
+#ifdef N3DS_DIRECT
+    if (mem != sStrmHeapMem[c - data_021fc650]) return;
+#else
     if (mem != c->buffer) return;
+#endif
     OS_LockMutex(&data_021fc160.mutex);
     if (data_021fbdac != 0) OS_LockMutex(&data_021fbdac->mutex);
     ForceStopStrm__sndarc_stream(c);

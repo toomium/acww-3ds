@@ -28,6 +28,12 @@
 #include "proto/autoload_2/unk_020e8558.h"
 #include "proto/main/unk_02087e70.h"
 #include "proto/ov002/unk_ov002_022025cc.h"
+#ifdef N3DS_DIRECT
+#include "n3ds_ui.h"
+// the options button as a focus in the tab row, left of the pockets' tab (0-0xc are taken, 0xd on the list's entries,
+// at most 0xd + 0x38): a tab focus whose tab is N3DS_OPT_TAB
+#define BOOK_OPT_FOCUS 0xff
+#endif
 
 
 extern "C" {
@@ -814,7 +820,11 @@ void CreatureBook_SelectEntry(CreatureBookPanel *s, u8 v) {
 s32 CreatureBook_GetFocusX(CreatureBookPanel *s) {
     s32 r;
     if (CreatureBook_GetFocusedTab(s) != -1) {
+#ifdef N3DS_DIRECT
+        r = MenuTabBar_GetTabX(CreatureBook_GetFocusedTab(s));
+#else
         r = MenuTabBar_GetTabX(s->focus - 5);
+#endif
     } else {
         u32 t = s->focus;
         if (t == 4) {
@@ -855,6 +865,11 @@ s32 CreatureBook_GetFocusedTab(CreatureBookPanel *s) {
     if (v >= 5 && v <= 0xc) {
         return v - 5;
     }
+#ifdef N3DS_DIRECT
+    if (v == BOOK_OPT_FOCUS) {
+        return N3DS_OPT_TAB;
+    }
+#endif
     return -1;
 }
 
@@ -872,6 +887,18 @@ BOOL CreatureBook_MoveFocus(CreatureBookPanel *s, u32 pad) {
         return FALSE;
     }
     u8 old = s->focus;
+#ifdef N3DS_DIRECT
+    // the options button: Left from the pockets' tab, Right back to it, Down as from the tabs
+    if (s->focus == BOOK_OPT_FOCUS) {
+        if (MenuKeys_HasDown(pad)) {
+            s->focus = 0;
+        } else if (MenuKeys_HasRight(pad)) {
+            s->focus = 5;
+        }
+    } else if (s->focus == 5 && MenuKeys_HasLeft(pad) && !MenuKeys_HasDown(pad)) {
+        s->focus = BOOK_OPT_FOCUS;
+    } else
+#endif
     if (CreatureBook_GetFocusedTab(s) != -1) {
         if (MenuKeys_HasDown(pad)) {
             s->focus = 0;

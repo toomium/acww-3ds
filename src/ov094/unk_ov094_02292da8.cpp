@@ -1,4 +1,5 @@
 #include "types.h"
+#include "n3ds_options.h"
 #include "item/ItemIconCache.h"
 #include "item/ItemName.h"
 #include "menu/InventoryGridTypes.h"
@@ -171,6 +172,34 @@ s32 InventoryItemGrid_HitTestSlot(InventoryItemGrid *o, s32 a, s32 b, s32 c)
     return FALSE;
 }
 
+#ifdef N3DS_DIRECT
+// Stacked fruit (n3ds_options.h): a stack's icon with its count in the bottom right corner, a light 3x5 digit in a dark
+// frame. The icons' palettes (menu/icon/b_obj_itm.bpl, OBJ palettes 7-14) all have their dark outline at 0xf and a
+// light grey at 0xd (palette 7: white at 9). src as the icon pages hold it: the top tiles at src, the bottom at +0x400.
+static u8 sStackIcon[0x440];
+static u8 *InventoryItemGrid_StackIcon(u8 *src, u32 item, u32 pal)
+{
+    // the digits' rows (3 bits each, the left pixel the top bit), from the top
+    static const u8 digits[10][5] = {{7, 5, 5, 5, 7}, {2, 6, 2, 2, 7}, {7, 1, 7, 4, 7}, {7, 1, 7, 1, 7}, {5, 5, 7, 1, 1},
+                                     {7, 4, 7, 1, 7}, {7, 4, 7, 5, 7}, {7, 1, 1, 2, 2}, {7, 5, 7, 5, 7}, {7, 5, 7, 1, 7}};
+    s32 n = n3ds_fruit_count(item);
+    if (n < 2) return src;
+    MI_CpuCopy8(src, sStackIcon, 0x40);
+    MI_CpuCopy8(src + 0x400, sStackIcon + 0x400, 0x40);
+    const u8 *d = digits[n % 10];
+    u32 light = pal == 7 ? 9 : 0xd;
+    for (s32 y = 9; y < 16; y++) {      // the digit at x 12-14, y 10-14; its frame one pixel around it
+        for (s32 x = 11; x < 16; x++) {
+            BOOL on = x >= 12 && x <= 14 && y >= 10 && y <= 14 && (d[y - 10] >> (14 - x) & 1);
+            u32 c = on ? light : 0xf;
+            u8 *b = sStackIcon + (y >> 3) * 0x400 + (x >> 3) * 0x20 + (y & 7) * 4 + (x & 7) / 2;
+            *b = (x & 1) ? (u8)((*b & 0x0f) | c << 4) : (u8)((*b & 0xf0) | c);
+        }
+    }
+    return sStackIcon;
+}
+#endif
+
 void InventoryItemGrid_LoadSlotIcon(InventoryItemGrid *o, s32 k, u16 *p, s32 a)
 {
     if (*p == 0xfff1) {
@@ -181,6 +210,9 @@ void InventoryItemGrid_LoadSlotIcon(InventoryItemGrid *o, s32 k, u16 *p, s32 a)
         OamObjTemplate *e = InventoryItemGrid_GetSlotSprite(o, k);
         s32 c = e->charName();
         u8 *q = o->iconCache.getIconChars(r);
+#ifdef N3DS_DIRECT
+        q = InventoryItemGrid_StackIcon(q, *p, InventoryItemGrid_GetIconPalette(&o->iconCache, r));
+#endif
         Gfx2d_LoadCharRange(q, 8, c, c, c + 1);
         Gfx2d_LoadCharRange(q + 0x400, 8, c + 0x20, c + 0x20, c + 0x21);
         u32 n = InventoryItemGrid_GetIconPalette(&o->iconCache, r);
@@ -259,6 +291,12 @@ void InventoryItemGrid_SetBalloonItemName(InventoryItemGrid *o, LabelBalloon *ds
     case 0:
     default:
         itemName.setFromItem(p);
+#ifdef N3DS_DIRECT
+        if (n3ds_fruit_count(*p) > 1) {  // a fruit stack (n3ds_options.h): "apple x3"
+            u8 n[4] = {' ', 'x', (u8)('0' + n3ds_fruit_count(*p)), 0};
+            itemName.append(n);
+        }
+#endif
         StrBuf_Copy((StrBuf *)&balloonText, (StrBuf *)&itemName);
         break;
     }
@@ -375,6 +413,9 @@ void InventoryItemGrid_SetSpriteItem(InventoryItemGrid *s, OamObjTemplate *r, u3
     s32 idx = InventoryItemGrid_GetIconIndex(s, &w, m);
     u8 *d = s->iconCache.getIconChars(idx);
     u32 c = InventoryItemGrid_GetIconPalette(&s->iconCache, idx);
+#ifdef N3DS_DIRECT
+    d = InventoryItemGrid_StackIcon(d, w, c);
+#endif
     InventoryItemGrid_UploadIcon(s, r, d, c);
 }
 

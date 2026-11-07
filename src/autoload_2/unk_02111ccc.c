@@ -42,7 +42,9 @@ void GX_EndLoadTex(void) {
     if (data_0213bfec != -1) {
         MI_WaitDma(data_0213bfec);
     }
+#ifndef N3DS_DIRECT  // (the enhanced port: they stayed mapped, GX_BeginLoadTex)
     GX_SetBankForTex(data_021fcc00);
+#endif
     data_021fcc08 = 0;
     data_021fcc04 = 0;
     data_021fcbf4 = 0;
@@ -51,13 +53,22 @@ void GX_EndLoadTex(void) {
 
 // GX_BeginLoadBGExtPltt
 void GX_BeginLoadTexPltt(void) {
+#ifdef N3DS_DIRECT  // (the banks stay mapped: GX_LoadTexPltt writes into their memory)
+    u32 GXi_TexPlttBanks(void);
+    s32 v = (s32)GXi_TexPlttBanks();
+#else
     s32 v = GX_ResetBankForTexPltt();
+#endif
     data_021fcbfc = v;
     data_021fcbf8 = (u32)data_02139f44[v >> 4] << 12;
 }
 
 // GX_LoadBGExtPltt
 void GX_LoadTexPltt(const void *src, u32 offset, u32 size) {
+#ifdef N3DS_DIRECT  // (the enhanced port: straight into the banks' own memory, at once)
+    MIi_CpuCopy32(src, host_vram_lcdc_direct(data_021fcbf8 + offset), size);
+    return;
+#endif
     u8 *dest = (u8 *)HostVram_CpuPtr(data_021fcbf8 + offset);  // (a VRAM address: LCDC)
     if (data_0213bfec != -1) {
         MI_DmaCopy32Async(data_0213bfec, src, dest, size, 0, 0);
@@ -71,7 +82,9 @@ void GX_EndLoadTexPltt(void) {
     if (data_0213bfec != -1) {
         MI_WaitDma(data_0213bfec);
     }
+#ifndef N3DS_DIRECT  // (the enhanced port: they stayed mapped, GX_BeginLoadTexPltt)
     GX_SetBankForTexPltt(data_021fcbfc);
+#endif
     data_021fcbfc = 0;
     data_021fcbf8 = 0;
 }

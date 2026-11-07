@@ -4,6 +4,7 @@
 #include "town/TownBlockCell.h"
 // mwcc-flags: -str reuse
 #include "types.h"
+#include "n3ds_options.h"
 #include "sys/ClockDateTime.h"
 #include "gfx/VecFx32.h"
 #include "item/PocketMatches.h"
@@ -5565,6 +5566,10 @@ void VillagerTalkTopics::onDeliveryItemPicked() {
         case 10:
             itemFromPlayer = *((PlayerInventory *)(r7))->getPocket(r6);
             c.item = 0xfff1;
+#ifdef N3DS_DIRECT
+            c.item = n3ds_fruit_rest(itemFromPlayer);  // of a fruit stack one fruit is given, the rest stays
+            itemFromPlayer = n3ds_fruit_one(itemFromPlayer);
+#endif
             ((PlayerInventory *)(r7))->setPocket((u16 *)(&c.item), r6, 0);
             break;
         case 19:

@@ -65,12 +65,16 @@ typedef struct Engine {
     const u8 *objExtPal;       // the 8 KB extended OBJ palette (NULL: not mapped)
     const u8 *palette;         // 0x400 bytes: BG palette, then OBJ palette
     const u8 *oam;             // 0x400 bytes
+#ifdef N3DS_DIRECT
+    const u8 *objAnchor;       // each OAM entry's anchor (gpu2d_obj_anchors) for this frame
+#endif
     // the affine BGs' internal reference points (BG2, BG3) for line refLine: from BGxX/BGxY at the frame's start,
     // then each line adds PB/PD, and a write to BGxX / BGxY (bit 0 / 1 of refWritten[i], an H-blank effect) reloads it
     s32 refX[2], refY[2];
     int refLine;
     u8 refWritten[2];
     u8 winActive[2];           // windows 0 and 1: bit 0 inside vertically, bit 1 horizontally (gpu2d.c)
+    u16 powcnt;                // POWCNT1 for the line being drawn
     // the line buffers
     u16 bg[4][SCREEN_W];
     ObjLine obj;
@@ -121,7 +125,13 @@ void gpu2d_feature(const Engine *e, enum Feature f);
 
 // gpu2d_bg.c: BG n's pixels of a line into e->bg[n] (all transparent when the BG shows nothing in this mode)
 void gpu2d_render_bg_line(Engine *e, int n, int line);
+// what BG n is in the engine's BG mode: 0 nothing, 1 text, 2 affine, 3 extended, 4 the large bitmap
+int gpu2d_bg_kind(const Engine *e, int n);
 // gpu2d_obj.c: the OBJs' pixels of a line into *dst
 void gpu2d_render_obj_line(Engine *e, int line, ObjLine *dst);
+// gpu2d_obj.c: the shown OBJs (the OBJ-window ones flagged) as sprites, their boxes' pixels into the atlas from (*ax, *ay)
+// on in rows *rowH tall (Gpu2dLayers.sprite); returns how many were put into out (a box that doesn't fit is left out)
+struct Gpu2dSprite;
+int gpu2d_obj_sprites(const Engine *e, struct Gpu2dSprite *out, u32 *atlas, int *ax, int *ay, int *rowH);
 
 #endif

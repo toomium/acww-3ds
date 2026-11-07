@@ -4693,10 +4693,7 @@ void NpcAnimCtrl::playAnimKeepFrame(NpcActor *scene, u32 c, u32 d, u32 e) {
 
 BOOL NpcAnimCtrl::isAnimFinished(NpcActor *scene) {
     using namespace nH;
-    // BUG, kept for now (the reference captures have it): this reads the start of model (its CachedModel part) as
-    // the AnimFrameCtrl; the DS tests the AnimFrameCtrl base of model (NpcActor + 0x188, model + 0x9c), i.e.
-    // static_cast<AnimFrameCtrl &>(scene->model).isFinished(), which changes the NPC animations (Kapp'n in the taxi).
-    if (((AnimFrameCtrl *)(void *)&scene->model)->isFinished() != 0) {
+    if (static_cast<AnimFrameCtrl &>(scene->model).isFinished() != 0) {
         return TRUE;
     }
     return FALSE;

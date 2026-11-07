@@ -970,6 +970,7 @@ u64 wm7_next_due(void) {
 }
 
 void wm7_run(u64 now) {
+    HOST_PROF(PROF_ARM7);
     static u64 sNextStat;
     if (sLog && sMp && now >= sNextStat) {
         sNextStat = now + FRAME_CYCLES * 60;

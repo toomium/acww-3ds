@@ -91,10 +91,12 @@ static void game_main(void *arg) {
 char **gHostArgv;  // (host_reset_system: the program starts again with them)
 int main(int argc, char **argv) {
     gHostArgv = argv;
+    host_plat_init();
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "-v")) gHostVerbose = 1;
         else gHostRomPath = argv[i];
     }
+    if (!gHostRomPath) gHostRomPath = getenv("ACWW_ROM");  // (the 3DS: no arguments, plat_3ds.c)
     if (!gHostRomPath) { fprintf(stderr, "usage: %s [-v] <rom.nds>\n", argv[0]); return 1; }
     HostOverlay_Init();  // the overlays' variables as they are now (overlay.c)
     card_init(gHostRomPath);

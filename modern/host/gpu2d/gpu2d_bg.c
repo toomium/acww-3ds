@@ -176,6 +176,12 @@ static void extended_line(Engine *e, int n, int line, u16 *dst) {
     }
 }
 
+int gpu2d_bg_kind(const Engine *e, int n) {
+    u32 dispcnt = reg32(e, REG_DISPCNT);
+    if (e->num == 1 && (dispcnt & 7) > 5) return BG_NONE;
+    return kBgKinds[dispcnt & 7][n];
+}
+
 // BG n's pixels of line `line`
 void gpu2d_render_bg_line(Engine *e, int n, int line) {
     u16 *dst = e->bg[n];

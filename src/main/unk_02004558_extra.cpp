@@ -2,6 +2,9 @@
 // The 14 functions of the translation unit 0x02004558-0x0201106c that only mwcc 1.2/base compiles
 // to the original code (see unk_02004558.cpp; same declarations, nothing else is defined here).
 #include "types.h"
+#ifdef HOST
+#include "host_input.h"
+#endif
 #include "proto/main/unk_020b4828.h"
 #include "gfx/VecFx32.h"
 #include "net/CommManager.h"
@@ -921,6 +924,10 @@ void PlayerActor::readInput() {
                     this->inputMagnitude = 0x1000;
                 } else {
                     this->inputMagnitude = 0xc32;
+#ifdef HOST
+                    // (the 3DS's circle pad: walking as fast as it is tilted, as the stylus's distance does)
+                    if (gHostStickTilt) this->inputMagnitude = gHostStickTilt < 0x400 ? 0x30c : gHostStickTilt * 0xc32 >> 12;
+#endif
                 }
                 this->inputAngle = gPad.dir;
             } else {

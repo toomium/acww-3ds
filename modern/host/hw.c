@@ -41,7 +41,15 @@ static u64 sIoCount;  // register accesses
 static u8 sIo0[PAGE] __attribute__((aligned(8)));
 static u8 sIoB[PAGE] __attribute__((aligned(8)));
 static u8 sIo1[PAGE] __attribute__((aligned(8)));
-u8 *host_io(u32 a) { return a >= IO1 ? sIo1 + (a - IO1) : a >= IOB ? sIoB + (a - IOB) : sIo0 + (a - IO0); }
+// (a pointer the compiler can't see through: it would otherwise fold `page + (a - IO0)` into the constant
+// `page - IO0` plus a, an address outside the program, which a 3DS program's relocations (.3dsx) can't express)
+static u8 *opaque(u8 *p) {
+    __asm__("" : "+r"(p));
+    return p;
+}
+u8 *host_io(u32 a) {
+    return a >= IO1 ? opaque(sIo1) + (a - IO1) : a >= IOB ? opaque(sIoB) + (a - IOB) : opaque(sIo0) + (a - IO0);
+}
 static int is_io(u32 a) { return (a >= IO0 && a < IOB + PAGE) || (a >= IO1 && a < IO1 + PAGE); }
 
 // vram.c
@@ -65,8 +73,11 @@ static u32 sIF;
 void host_irq_raise(u32 m) { sIF |= m; }
 void host_irq_ack(u32 m) { sIF &= ~m; }
 u32 host_irq_pending(void) {
-    u32 lines = sIF | (render_gx_fifo_irq_level() ? 1u << 21 : 0);  // the GX FIFO line is level-triggered
-    return (R32(0x04000208) & 1) ? (R32(0x04000210) & lines) : 0;
+    // (asked after every register access: the GX FIFO line, level-triggered, only when it is enabled)
+    u32 enabled = (R32(0x04000208) & 1) ? R32(0x04000210) : 0;
+    if (!enabled) return 0;
+    u32 lines = sIF | ((enabled & 1u << 21) && render_gx_fifo_irq_level() ? 1u << 21 : 0);
+    return enabled & lines;
 }
 
 // ---- timers (0x04000100 + 4n: counter/reload u16, control u16)
@@ -84,10 +95,91 @@ static u64 tm_next_overflow(Timer *t) {
     return t->start + (done + 1) * p;
 }
 
+// ---- ACWW_FPS's profile (host.h): the game's thread marks the part it is in, a sampler thread counts them every
+// millisecond; with the fps line, each part's share of the real time as milliseconds a frame
+// The background threads (the watchdog, ACWW_FPS's sampler) stop before the program ends (host_quit): the 3DS frees
+// the heap, their stacks too, before it ends the process, and a thread waking in between faults
+static int sThreadsQuit, sThreadsRunning;  // (atomics)
+static int threads_quitting(void) { return __atomic_load_n(&sThreadsQuit, __ATOMIC_ACQUIRE); }
+static void thread_stopped(void) { __atomic_sub_fetch(&sThreadsRunning, 1, __ATOMIC_RELEASE); }
+static int thread_start(void (*fn)(void *), void *arg, int sampler) {
+    __atomic_add_fetch(&sThreadsRunning, 1, __ATOMIC_RELAXED);
+    if (sampler ? host_plat_sampler_start(fn, arg, sampler == 2) : host_plat_thread_start(fn, arg)) return 1;
+    thread_stopped();
+    return 0;
+}
+int host_thread_start(void (*fn)(void *), void *arg, int otherCore) { return thread_start(fn, arg, otherCore); }
+int host_threads_quitting(void) { return threads_quitting(); }
+void host_thread_stopped(void) { thread_stopped(); }
+static void threads_stop(void) {
+    __atomic_store_n(&sThreadsQuit, 1, __ATOMIC_RELEASE);
+    for (int i = 0; i < 50 && __atomic_load_n(&sThreadsRunning, __ATOMIC_ACQUIRE); i++) host_plat_sleep_ms(5);
+}
+
+volatile int gHostProf, gHostProfWorker = PROF_IDLE;
+static u32 sProfSamples[2][PROF_N];  // the game's thread, the GPU thread (written by the sampler only)
+static void prof_sampler(void *arg) {
+    (void)arg;
+    while (!threads_quitting()) {
+        host_plat_sleep_ms(1);
+        int p = gHostProf, w = gHostProfWorker;
+        __atomic_store_n(&sProfSamples[0][p], sProfSamples[0][p] + 1, __ATOMIC_RELAXED);
+        __atomic_store_n(&sProfSamples[1][w], sProfSamples[1][w] + 1, __ATOMIC_RELAXED);
+    }
+    thread_stopped();
+}
+static const char *const kProfNames[PROF_N] = {"game", "registers", "DMA", "geometry", "2D", "3D", "compositing",
+                                               "sound", "frontend", "pacing", "GPU wait", "lighting",
+                                               "vertices", "waiting for the GPU thread", "idle", "ROM",
+                                               "ARM7", "uploads", "VRAM", "BG tiles", "top hash", "frame end"};
+// the slowest frame of the 120: the parts the sampler saw in it (milliseconds), the game's thread and the GPU thread
+static u32 sProfAt[2][PROF_N], sProfSlowest[2][PROF_N];
+static void prof_frame(int slowest) {
+    for (int t = 0; t < 2; t++)
+        for (int i = 0; i < PROF_N; i++) {
+            u32 v = __atomic_load_n(&sProfSamples[t][i], __ATOMIC_RELAXED);
+            if (slowest) sProfSlowest[t][i] = v - sProfAt[t][i];
+            sProfAt[t][i] = v;
+        }
+}
+// (a line is put together first and written at once: the GPU thread's lines would come between the pieces)
+static void prof_slowest_report(void) {
+    char line[512];
+    int n = 0;
+    for (int t = 0; t < 2; t++) {
+        n += snprintf(line + n, sizeof line - n, t ? "; the GPU thread:" : "the slowest frame's parts (ms):");
+        for (int i = 0; i < PROF_N; i++)
+            if (sProfSlowest[t][i] >= 2) n += snprintf(line + n, sizeof line - n, " %s %u", kProfNames[i], sProfSlowest[t][i]);
+    }
+    fprintf(stderr, "%s\n", line);
+}
+static void prof_report(double frameMs) {
+    const char *const *kNames = kProfNames;
+    static u32 seen[2][PROF_N];
+    for (int t = 0; t < 2; t++) {
+        u32 n[PROF_N], total = 0;
+        for (int i = 0; i < PROF_N; i++) {
+            n[i] = __atomic_load_n(&sProfSamples[t][i], __ATOMIC_RELAXED) - seen[t][i];
+            seen[t][i] += n[i];
+            total += n[i];
+        }
+        if (!total || (t == 1 && n[PROF_IDLE] == total)) continue;  // (no GPU thread: always idle)
+        char line[512];
+        int k = snprintf(line, sizeof line, "profile%s: %u samples, ms a frame:", t ? ", the GPU thread" : "", total);
+        for (int i = 0; i < PROF_N; i++)
+            if (t == 0 ? i != PROF_IDLE && i < PROF_TILES
+                       : (i == PROF_2D || i == PROF_3D || i == PROF_COMP || i == PROF_GPU || i == PROF_UPLOAD || i == PROF_IDLE ||
+                          i == PROF_VERTEX || i == PROF_VRAM || i == PROF_LIGHT || i >= PROF_TILES))  // (the 3DS's jobs' parts)
+                k += snprintf(line + k, sizeof line - k, " %s %.1f", kNames[i], frameMs * n[i] / total);
+        fprintf(stderr, "%s\n", line);
+    }
+}
+
 // ---- real time: one frame per 1/60 s unless ACWW_FAST is set
 static int sFast = -1;
 static u64 sNextFrame;  // host_plat_time_ns
 static void host_pace_frame(void) {
+    HOST_PROF(PROF_PACE);
     // ACWW_FAST=1: never paced; ACWW_FAST=<frame> (> 1): not paced until that frame (a test gets somewhere quickly,
     // then runs in real time - the wireless tests: two copies keep each other's pace)
     if (sFast < 0) sFast = getenv("ACWW_FAST") ? (atoi(getenv("ACWW_FAST")) > 1 ? atoi(getenv("ACWW_FAST")) : 1) : 0;
@@ -114,7 +206,7 @@ void host_set_paused(int paused) {
 static void watchdog(void *arg) {
     u32 limit = (u32)(uintptr_t)arg, still = 0, last = 0;
     int reported = 0;
-    for (;;) {
+    while (!threads_quitting()) {
         host_plat_sleep_ms(100);
         u32 hb = __atomic_load_n(&sHeartbeat, __ATOMIC_RELAXED);
         if (hb != last || __atomic_load_n(&sPaused, __ATOMIC_RELAXED)) { last = hb; still = 0; reported = 0; continue; }
@@ -126,12 +218,27 @@ static void watchdog(void *arg) {
                     __atomic_load_n(&sHeartbeatFrame, __ATOMIC_RELAXED));
         }
     }
+    thread_stopped();
 }
+#ifdef N3DS_DIRECT
+// The enhanced port's log: stderr goes into memory (plat_3ds.c), and this thread writes it out
+// four times a second: a write to the 3DS's SD card took 20-140 ms, now and then 10 s. What a crash leaves unwritten
+// is lost.
+static void log_writer(void *arg) {
+    (void)arg;
+    while (!threads_quitting()) {
+        for (int i = 0; i < 25 && !threads_quitting(); i++) host_plat_sleep_ms(10);  // (threads_stop waits 250 ms)
+        host_plat_log_write();
+    }
+    host_plat_log_write();
+    thread_stopped();
+}
+#endif
 static void watchdog_start(void) {
     const char *e = getenv("ACWW_WATCHDOG");
     long ms = e ? strtol(e, 0, 10) : 2000;
     if (ms <= 0) return;
-    if (!host_plat_thread_start(watchdog, (void *)(uintptr_t)ms)) fprintf(stderr, "host: no watchdog thread\n");
+    if (!thread_start(watchdog, (void *)(uintptr_t)ms, 0)) fprintf(stderr, "host: no watchdog thread\n");
 }
 
 // ---- screenshots: ACWW_SHOT="frame:path.ppm;..." (both screens, 256x384)
@@ -146,7 +253,7 @@ static void host_screenshot(void) {
             if (o) {
                 fprintf(o, "P6\n256 384\n255\n");
                 for (int s = 0; s < 2; s++) {
-                    const u32 *px = render_screen(s);
+                    const uint32_t *px = render_screen(s);
                     for (int i = 0; i < 256 * 192; i++) { u8 rgb[3] = {px[i] >> 16, px[i] >> 8, px[i]}; fwrite(rgb, 1, 3, o); }
                 }
                 fclose(o);
@@ -230,7 +337,19 @@ static void run_events_body(void) {
     wm7_run(sCycles);
     while (sCycles >= sNextVblank) {
         static int watchdogOn;
-        if (!watchdogOn) { watchdogOn = 1; watchdog_start(); }
+        if (!watchdogOn) {
+            watchdogOn = 1;
+            watchdog_start();
+        }
+#ifdef N3DS_DIRECT
+        // (from frame 600 on: the start's ROM reads took 10 s on hardware once the log's thread wrote to the SD card
+        // beside them, unverified as the cause; until then the buffer holds the lines)
+        static int logThread;
+        if (!logThread && host_frame() >= 600) {
+            logThread = 1;
+            if (!thread_start(log_writer, 0, 0)) fprintf(stderr, "host: no thread for the log\n");
+        }
+#endif
         __atomic_store_n(&sHeartbeatFrame, (u32)host_frame(), __ATOMIC_RELAXED);
         u16 st = R16(0x04000004);
         if (st & 8) host_irq_raise(1);    // VBlank
@@ -354,10 +473,28 @@ static void run_events_body(void) {
             { static unsigned long long lastIo; fprintf(stderr, " io %llu", (unsigned long long)sIoCount - lastIo); lastIo = sIoCount; }
             fprintf(stderr, " vramcnt %08x %08x ime %x ie %08x if %08x cpu %x\n", R32(0x04000240), R32(0x04000244), R32(0x04000208), R32(0x04000210), sIF, host_irq_state());
         }
+        static u64 prevFrame, slowest, slowestAt;  // (ACWW_FPS: the longest frame of the 120, real time, and which)
+        if (getenv("ACWW_FPS")) {
+            u64 t = host_plat_time_ns();
+            int slow = prevFrame && t - prevFrame > slowest;
+            if (slow) slowest = t - prevFrame, slowestAt = host_frame();
+            prevFrame = t;
+            prof_frame(slow);
+        }
         if (getenv("ACWW_FPS") && host_frame() % 120 == 0) {  // frames per second of real time, over the last 120
             static u64 last;
             u64 now = host_plat_time_ns();
-            if (last) fprintf(stderr, "fps: frame %llu %.1f\n", (unsigned long long)host_frame(), 120 / ((double)(now - last) * 1e-9));
+            if (last) {
+                fprintf(stderr, "fps: frame %llu %.1f, the slowest frame %.1f ms (frame %llu)\n", (unsigned long long)host_frame(),
+                        120 / ((double)(now - last) * 1e-9), slowest * 1e-6, (unsigned long long)slowestAt);
+                slowest = 0;
+                prof_slowest_report();
+                prof_report((double)(now - last) / 120e6);
+                double ms = (double)(host_plat_time_ns() - now) * 1e-6;  // (the report's writes: the 3DS's SD card)
+                if (ms > 100) fprintf(stderr, "host: the report above took %.0f ms to write\n", ms);
+            } else if (!thread_start(prof_sampler, 0, 1)) {
+                fprintf(stderr, "host: no thread for ACWW_FPS's profile\n");
+            }
             last = now;
         }
         host_pace_frame();
@@ -419,7 +556,9 @@ void HostDma_Addresses(unsigned int ch, uintptr_t src, uintptr_t dst) {
 static uintptr_t dma_address(u32 reg, uintptr_t full) { return (u32)full == reg ? full : reg; }
 static int dma_is_io(uintptr_t a) { return a <= 0xffffffffu && is_io((u32)a); }
 void gx_fifo_write(u32 addr, u32 value);
+static int sTimingLegacy; static u32 sPollAddr; static long sIoLog;  // (defined below)
 static void dma_run(int ch) {
+    HOST_PROF(PROF_DMA);
     u32 base = 0x040000b0 + ch * 12, cnt = R32(base + 8);
     uintptr_t src = dma_address(R32(base), sDmaSrc[ch]), dst = dma_address(R32(base + 4), sDmaDst[ch]);
     u32 n = cnt & 0x1fffff, w = (cnt >> 26 & 1) ? 4 : 2;
@@ -430,6 +569,27 @@ static void dma_run(int ch) {
                 (unsigned long long)dst, cnt);
         R32(base + 8) = cnt & ~0x80000000u;
         return;
+    }
+    // memory to memory, both ascending and not overlapping: one copy (the words the loop below would copy)
+    int incDst = dc == 0 || dc == 3;
+    if (sc == 0 && incDst && !dma_is_io(src) && !dma_is_io(dst) && (dst + (uintptr_t)n * w <= src || src + (uintptr_t)n * w <= dst)) {
+        memcpy((void *)dst, (const void *)src, (size_t)n * w);
+        src += (uintptr_t)n * w;
+        dst += (uintptr_t)n * w;
+        n = 0;
+    }
+    // memory to a 3D command port (the GX FIFO's DMA): the words the loop below would write, without the register
+    // layer per word (io_write does nothing else for them: no interrupt is checked between a DMA's words)
+    u32 d32 = (u32)dst;
+    if (w == 4 && sc == 0 && dc == 2 && n && !dma_is_io(src) && dst == d32 && d32 >= 0x04000400 && d32 < 0x04000600 &&
+        sTimingLegacy == 0 && sTimeless + n < 1000000 && sIoLog == -1) {
+        R32(d32) = ((const u32 *)src)[n - 1];
+        sPollAddr = ~0u;
+        sTimeless += n;
+        sGxWrites += n;
+        render_write32_n(d32, (const u32 *)src, n);
+        src += (uintptr_t)n * 4;
+        n = 0;
     }
     for (u32 i = 0; i < n; i++) {
         u32 v;
@@ -514,8 +674,9 @@ void host_spend_cycles(u64 n) {
 // code's in which the frame happens to be drawn.
 static int sHBlankLine = -1;
 static u32 sPollAddr, sPollRepeat;  // (defined below, io_read_cost)
-void host_hblank(int line) {
-    if (!(R16(0x04000004) & 0x10) || !(R32(0x04000208) & 1) || !(R32(0x04000210) & 2)) return;
+// returns 0 if no handler ran (nothing in the game changed)
+int host_hblank(int line) {
+    if (!(R16(0x04000004) & 0x10) || !(R32(0x04000208) & 1) || !(R32(0x04000210) & 2)) return 0;
     u16 st = R16(0x04000004), vcount = R16(0x04000006);
     u32 pollAddr = sPollAddr, pollRepeat = sPollRepeat, timeless = sTimeless;
     sHBlankLine = line;
@@ -524,6 +685,7 @@ void host_hblank(int line) {
     sPollAddr = pollAddr, sPollRepeat = pollRepeat, sTimeless = timeless;
     R16(0x04000004) = st;
     R16(0x04000006) = vcount;
+    return 1;
 }
 static void io_read(u32 a) {
     if (sHBlankLine >= 0 && (a & ~3u) == 0x04000004) {
@@ -551,7 +713,8 @@ static void io_read(u32 a) {
     } else if (w == IO1 + 0x10) R32(w) = card_read_data();
 }
 
-// display registers for the renderer: the 3D command ports in full on every write, the others as changed halves
+// display registers for the renderer: the 3D command ports in full on every write, the others as changed halves (and
+// the affine reference points on every write)
 static void forward_display(u32 w, u32 old) {
     u32 v = R32(w);
     if ((w >= 0x04000400 && w < 0x04000600) || w == 0x04000600) { sGxWrites++; render_write32(w, v); return; }
@@ -562,9 +725,11 @@ static void forward_display(u32 w, u32 old) {
         }
         return;
     }
+    // (BGxX / BGxY of either engine: a write reloads the affine BG's internal reference point even with the same value)
+    int reload = (w & ~0x1014u) == 0x04000028;
     for (int h = 0; h < 2; h++) {
         u16 n = v >> (16 * h), o = old >> (16 * h);
-        if (n != o) render_write16(w + 2 * h, n);
+        if (n != o || reload) render_write16(w + 2 * h, n);
     }
 }
 static int is_display(u32 w) {
@@ -586,15 +751,15 @@ static void io_spin_check(void) {
     host_advance_to_next_event();
 }
 
+static long sIoLog = -2;  // ACWW_IOLOG
 static void io_write(u32 a, u32 old) {
     u32 w = a & ~3u;
     if (!sTimingLegacy) {
         sPollAddr = ~0u;  // (a write ends a polling loop)
         io_spin_check();
     }
-    static long logw = -2;
-    if (logw == -2) logw = getenv("ACWW_IOLOG") ? strtol(getenv("ACWW_IOLOG"), 0, 16) : -1;
-    if ((long)w == logw) fprintf(stderr, "io: frame %llu [%08x] %08x -> %08x\n", (unsigned long long)host_frame(), w, old, R32(w));
+    if (sIoLog == -2) sIoLog = getenv("ACWW_IOLOG") ? strtol(getenv("ACWW_IOLOG"), 0, 16) : -1;
+    if ((long)w == sIoLog) fprintf(stderr, "io: frame %llu [%08x] %08x -> %08x\n", (unsigned long long)host_frame(), w, old, R32(w));
     if (is_display(w)) { forward_display(w, old); return; }
     switch (w) {
     case 0x04000214: { u32 v = R32(w); sIF &= ~v; R32(w) = sIF; break; }
@@ -662,6 +827,9 @@ static uintptr_t io_last_caller(void) { return sRing[(sRingPos - 1) & 15].pc; }
 // down, the reports written, then _Exit - not exit, whose handlers would run the game's static destructors, which
 // free into heaps that aren't there any more outside the game's threads
 void host_quit(void) {
+    threads_stop();
+    extern void pxi7_save_flush(void);
+    pxi7_save_flush();
     extern void snd7_output_close(void);
     snd7_output_close();
     extern void frontend_shutdown(void);
@@ -678,6 +846,8 @@ void host_reset_system(void) {
     fprintf(stderr, "host: the game reset the system (frame %llu)%s\n", (unsigned long long)host_frame(),
             getenv("ACWW_HEADLESS") ? ": the run ends" : ": starting again");
     if (getenv("ACWW_HEADLESS")) host_quit();
+    extern void pxi7_save_flush(void);
+    pxi7_save_flush();
     extern void snd7_output_close(void);
     snd7_output_close();
     extern void frontend_shutdown(void);
@@ -771,6 +941,7 @@ static void io_note(uintptr_t a, int write, void *caller) {
     if (sIoHist) io_hist((u32)a, (uintptr_t)caller, write);
 }
 unsigned long long HostIo_Read(uintptr_t addr, unsigned int size) {
+    HOST_PROF(PROF_REGS);
     u32 a = (u32)addr;
     if (sHBlankLine >= 0)  // (the H-blank handler's accesses: not the game code's traffic, host_hblank)
         return size == 8 ? io_load(a, 4) | (unsigned long long)io_load(a + 4, 4) << 32 : io_load(a, size);
@@ -781,6 +952,7 @@ unsigned long long HostIo_Read(uintptr_t addr, unsigned int size) {
     return v;
 }
 unsigned long long HostIo_Write(uintptr_t addr, unsigned int size, unsigned long long v) {
+    HOST_PROF(PROF_REGS);
     u32 a = (u32)addr;
     int traced = sHBlankLine < 0;  // (as for reads)
     if (traced) io_note(addr, 1, __builtin_return_address(0));
@@ -793,6 +965,47 @@ unsigned long long HostIo_Write(uintptr_t addr, unsigned int size, unsigned long
     }
     if (traced) io_access_done();
     return v;
+}
+
+// MIi_CpuSend32 to a 3D command port (sdk.c), most of the game's register writes: each word as HostIo_Write takes
+// it, without the dispatch that the port decides once (a display register: the 3D engine, forward_display). Through
+// HostIo_Write while a trace or the histogram wants every access, in an H-blank handler, or for ACWW_IOLOG.
+void HostIo_Send32(uintptr_t addr, const u32 *src, u32 n) {
+    u32 a = (u32)addr;
+    if (sIoTrace != 0 || sIoHist != 0 || sHBlankLine >= 0 || sIoLog != -1 || a < 0x04000400 || a >= 0x04000600) {
+        for (u32 i = 0; i < n; i++) HostIo_Write(addr, 4, src[i]);
+        return;
+    }
+    HOST_PROF(PROF_REGS);
+    void *caller = __builtin_return_address(0);
+    for (u32 i = 0; i < n; i++) {
+        // after the first word, with the GX FIFO interrupt off and no time to move (the spin check far from its
+        // limit), nothing between the words can make an interrupt due: the rest at once, checked after the last
+        if (i == 1 && sTimingLegacy == 0 && sTimeless + n < 1000000 &&
+            !((R32(0x04000208) & 1) && (R32(0x04000210) & 1u << 21))) {
+            u32 m = n - 1;
+            sIoCount += m;
+            for (u32 k = 0; k < m && k < 16; k++) sRing[sRingPos++ & 15] = (struct IoLog){a, 1, (uintptr_t)caller};
+            sRingPos += m > 16 ? m - 16 : 0;
+            R32(a) = src[n - 1];
+            sPollAddr = ~0u;
+            sTimeless += m;
+            sGxWrites += m;
+            render_write32_n(a, src + 1, m);
+            io_access_done();
+            break;
+        }
+        sIoCount++;
+        sRing[sRingPos++ & 15] = (struct IoLog){a, 1, (uintptr_t)caller};
+        R32(a) = src[i];
+        if (!sTimingLegacy) {
+            sPollAddr = ~0u;
+            io_spin_check();
+        }
+        sGxWrites++;
+        render_write32(a, src[i]);
+        io_access_done();
+    }
 }
 
 // ---- ACWW_HIGHMEM=1 (x86-64 Linux): the low-4 GB poisoning harness (docs/portability.md 3.0, 3.3). The whole low

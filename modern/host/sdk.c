@@ -69,8 +69,10 @@ void MIi_CpuCopy32(const void *src, void *dst, u32 n) {
     u32 *d = dst;
     for (n /= 4; n--;) *d++ = *s++;
 }
+void HostIo_Send32(uintptr_t addr, const u32 *src, u32 n);  // (hw.c)
 void MIi_CpuSend32(const void *src, volatile void *dst, u32 n) {
-    if (is_reg(dst)) { units(src, dst, n, 4, 0, 0, 1); return; }  // the 3D command FIFO: every word to one port
+    if (is_reg(dst) && !is_reg(src)) { HostIo_Send32((uintptr_t)dst, src, n / 4); return; }  // the 3D command FIFO
+    if (is_reg(dst)) { units(src, dst, n, 4, 0, 0, 1); return; }  // (every word to one port)
     const u32 *s = src;
     volatile u32 *d = dst;
     for (n /= 4; n--;) *d = *s++;

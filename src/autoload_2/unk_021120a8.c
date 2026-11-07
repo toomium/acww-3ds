@@ -36,6 +36,22 @@ static inline void GXi_DmaCopy32Async(s32 dmaNo, const void *src, void *dest, u3
 // GX_LoadTex
 void GX_LoadTex(const void *pSrc, u32 dstSlotOffset, u32 szByte) {
     void *pLCDC;
+#ifdef N3DS_DIRECT
+    // the enhanced port (VRAM): straight into the banks' own memory (vram.c), which
+    // GX_BeginLoadTex leaves mapped to the texture slots; at once, by the CPU
+    if (data_021fcc04 && dstSlotOffset + szByte >= data_021fcc08) {
+        if (dstSlotOffset >= data_021fcc08) {
+            MIi_CpuCopy32(pSrc, host_vram_lcdc_direct(data_021fcc04 + dstSlotOffset - data_021fcc08), szByte);
+        } else {
+            u32 sz = data_021fcc08 - dstSlotOffset;
+            MIi_CpuCopy32(pSrc, host_vram_lcdc_direct(data_021fcbf4 + dstSlotOffset), sz);
+            MIi_CpuCopy32((const u8 *)pSrc + sz, host_vram_lcdc_direct(data_021fcc04), szByte - sz);
+        }
+    } else {
+        MIi_CpuCopy32(pSrc, host_vram_lcdc_direct(data_021fcbf4 + dstSlotOffset), szByte);
+    }
+    return;
+#endif
 
     if (0 == data_021fcc04) {
         pLCDC = HostVram_CpuPtr(data_021fcbf4 + dstSlotOffset);

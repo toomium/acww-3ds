@@ -15,7 +15,12 @@ s32 GX_ResetBankForTex(void);
 
 // GX_BeginLoadTex
 void GX_BeginLoadTex(void) {
+#ifdef N3DS_DIRECT  // (the banks stay mapped: GX_LoadTex writes into their memory)
+    u32 GXi_TexBanks(void);
+    s32 i = (s32)GXi_TexBanks();
+#else
     s32 i = GX_ResetBankForTex();
+#endif
     data_021fcc00 = i;
     data_021fcbf4 = (u32)data_02139f54[i].x << 12;
     data_021fcc04 = (u32)data_02139f56[i].x << 12;

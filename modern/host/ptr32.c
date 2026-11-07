@@ -1,5 +1,5 @@
-// Host build: pointers in the 32-bit slots of the DS's data formats (include/host_ptr32.h). A pointer that doesn't fit
-// below HOST_PTR32_HANDLE gets a handle: HOST_PTR32_HANDLE + its index in sPtrs. Each distinct pointer is stored
+// Host build: pointers in the 32-bit slots of the DS's data formats (include/host_ptr32.h). A pointer that isn't
+// stored as itself gets a handle: HOST_PTR32_HANDLE + its index in sPtrs. Each distinct pointer is stored
 // once (a hash from pointer to index), so the table grows only with the number of distinct addresses ever stored
 // (the sound data's links: a few hundred in a session).
 
@@ -7,8 +7,6 @@
 
 #include "host.h"
 #include "host_ptr32.h"
-
-#if __SIZEOF_POINTER__ == 8
 
 static const void **sPtrs;   // index -> pointer
 static u32 sCount, sCap;
@@ -57,5 +55,3 @@ void *HostPtr32_Lookup(unsigned int handle) {
     if (i >= sCount) host_fatal("HostPtr32: not a handle");
     return (void *)sPtrs[i];
 }
-
-#endif

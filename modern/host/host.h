@@ -7,8 +7,8 @@
 
 typedef uint8_t u8;
 typedef uint16_t u16;
-typedef uint32_t u32;
-typedef int32_t s32;
+typedef unsigned int u32;
+typedef signed int s32;  // (the game's types, include/types.h: uint32_t is unsigned long on arm-none-eabi)
 typedef unsigned long long u64;  // (the game's type: uint64_t is unsigned long on 64-bit Linux)
 
 // main.c
@@ -42,6 +42,7 @@ void host_io_ring_dump(void);          // the last register accesses (stderr)
 void host_quit(void) __attribute__((noreturn));  // the end of a run: reports, then _Exit (hw.c)
 void host_set_paused(int paused);  // the frontend holds the game (the watchdog keeps quiet)
 void host_exit_dumps(void);            // the reports written at exit (ACWW_IOHIST, ACWW_PROFILE)
+#include "prof.h"  // (ACWW_FPS's profile)
 
 // debug_posix.c (empty without HOST_DEBUG_POSIX)
 void host_debug_init(void);
@@ -54,6 +55,12 @@ void host_irq_call(int bit);  // os.c: one interrupt handler at once (the H-blan
 void host_advance_to_next_event(void);
 u64 host_frame(void);
 u64 host_cycles(void);
+// a background thread (hw.c; another core: the 3DS's core 2 or 1) that ends when host_threads_quitting says so,
+// calling host_thread_stopped: the program's end waits for it (the 3DS frees the threads' stacks)
+// (otherCore: 0 the game's core, 1 another (the New 3DS's core 2 first), 2 another, the 3DS's system core 1 first)
+int host_thread_start(void (*fn)(void *), void *arg, int otherCore);
+int host_threads_quitting(void);
+void host_thread_stopped(void);
 void host_spend_cycles(u64 n);  // a busy wait of n cycles (hw.c; nothing with ACWW_TIMING=legacy)
 
 // os.c

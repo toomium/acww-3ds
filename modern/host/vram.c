@@ -14,6 +14,7 @@
 
 #include "host.h"
 #include "host_mem.h"
+#include "prof.h"
 
 enum { BANK_TOTAL = 0xa4000, GRANULE = 0x4000 };
 static const u32 kSize[9] = {0x20000, 0x20000, 0x20000, 0x20000, 0x10000, 0x4000, 0x4000, 0x8000, 0x4000};
@@ -106,27 +107,46 @@ static int granule(u32 a) {
 
 // the windows' contents back into the banks that show there
 void host_vram_flush(void) {
+    HOST_PROF(PROF_VRAM);
     for (int g = 0; g < NGRAN; g++)
         if (sGran[g].bank >= 0) memcpy(sBanks + sOffset[sGran[g].bank] + sGran[g].off, sGran[g].win, GRANULE);
 }
 
+// bumped at every remap: the banks the CPU can't see (textures, texture palettes...) change only then
+static u32 sGeneration;
+u32 host_vram_generation(void) { return sGeneration; }
+
+// Only the granules whose bank changes: their old bank gets the window's contents, then they get the new one's (or
+// zeros). A granule that keeps its bank would get back what it holds. (So a write the game makes where no bank
+// shows stays until a bank shows there, not until the next VRAMCNT change; neither happens on the DS, where it is
+// lost. Remapping everything moved megabytes at each change, several a frame when the game loads textures.)
 static void remap(void) {
-    host_vram_flush();
-    for (int g = 0; g < NGRAN; g++) sGran[g].bank = -1;
+    HOST_PROF(PROF_VRAM);
+    sGeneration++;
+    static struct { s32 bank; u32 off; } now[NGRAN];
+    static int first = 1;
+    for (int g = 0; g < NGRAN; g++) now[g].bank = -1, now[g].off = 0;
     for (int i = 0; i < 9; i++) {
         u32 a = bank_address(i, sCnt[i]);
         if (!a) continue;
         for (u32 off = 0; off < kSize[i]; off += GRANULE) {
             int g = granule(a + off);
             if (g < 0) { fprintf(stderr, "vram: bank %c at %08x outside the windows\n", 'A' + i, a + off); continue; }
-            sGran[g].bank = i;
-            sGran[g].off = off;
+            now[g].bank = i;
+            now[g].off = off;
         }
     }
+    for (int g = 0; g < NGRAN; g++)
+        if (sGran[g].bank >= 0 && (sGran[g].bank != now[g].bank || sGran[g].off != now[g].off))
+            memcpy(sBanks + sOffset[sGran[g].bank] + sGran[g].off, sGran[g].win, GRANULE);
     for (int g = 0; g < NGRAN; g++) {
-        if (sGran[g].bank >= 0) memcpy(sGran[g].win, sBanks + sOffset[sGran[g].bank] + sGran[g].off, GRANULE);
+        if (!first && sGran[g].bank == now[g].bank && sGran[g].off == now[g].off) continue;
+        sGran[g].bank = now[g].bank;
+        sGran[g].off = now[g].off;
+        if (now[g].bank >= 0) memcpy(sGran[g].win, sBanks + sOffset[now[g].bank] + now[g].off, GRANULE);
         else memset(sGran[g].win, 0, GRANULE);
     }
+    first = 0;
 }
 
 // VRAMCNT_A..I: 0x04000240-0x04000246, 0x04000248-0x04000249 (0x04000247 is WRAMCNT)
@@ -136,6 +156,18 @@ void host_vram_control(u32 addr, u8 value) {
     if (sCnt[i] == value) return;
     sCnt[i] = value;
     remap();
+}
+
+// The enhanced port's texture uploads (N3DS_DIRECT: GX_LoadTex, GX_LoadTexPltt): an LCDC address of a bank in the
+// bank's own memory, where the renderers read it (the banks stay mapped to the texture slots, out of the CPU's
+// windows); the renderers told that the textures changed (the generation)
+void *host_vram_lcdc_direct(unsigned int a) {
+    for (int i = 0; i < 9; i++)
+        if (a >= kLcdc[i] && a - kLcdc[i] < kSize[i]) {
+            sGeneration++;
+            return sBanks + sOffset[i] + (a - kLcdc[i]);
+        }
+    return HostVram_CpuPtr(a);
 }
 
 // the CPU's view of VRAM address a. An address outside the windows (a mirror the DS has and the host doesn't) is
@@ -158,6 +190,6 @@ void host_vram_init(void) {
     for (int i = 0; i < 9; i++) { sOffset[i] = total; total += kSize[i]; }
     int g = 0;
     for (unsigned w = 0; w < NWIN; w++)
-        for (u32 off = 0; off < kWindows[w].size; off += GRANULE, g++) sGran[g].win = sWinMem[w] + off;
+        for (u32 off = 0; off < kWindows[w].size; off += GRANULE, g++) sGran[g].win = sWinMem[w] + off, sGran[g].bank = -1;
     remap();
 }

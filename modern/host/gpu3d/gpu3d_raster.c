@@ -510,11 +510,14 @@ static void aa_pass(void) {
         if (sCov[i] < 31) sColor[i] = aa_resolve(sColor[i], sColor2[i], sCov[i]);
 }
 
+// (a division by 2^k as C's, truncating towards zero, with shifts: the 3DS's CPU has no divide instruction)
+static inline s32 div_pow2(s32 v, int k) { return v >= 0 ? v >> k : -(-v >> k); }
 static void fog_pass(void) {
     const G3RenderState *r = sR;
     if (!(r->dispcnt & 0x80) || getenv("ACWW_GPU3D_NOFOG")) return;  // (NOFOG: diagnostics)
     int shift = r->dispcnt >> 8 & 15;
     s32 step = shift <= 10 ? 0x400 >> shift : 0;
+    int k = 10 - shift;  // (step = 2^k)
     u32 fc = r->fogColor;
     u32 fr = rgb5_to_6(fc & 31), fgc = rgb5_to_6(fc >> 5 & 31), fb = rgb5_to_6(fc >> 10 & 31), fa = fc >> 16 & 31;
     for (int i = 0; i < W * H; i++) {
@@ -524,11 +527,11 @@ static void fog_pass(void) {
         s32 b0 = r->fogOffset + step;
         if (z < b0 || !step) d = z < b0 ? r->fogTable[0] : r->fogTable[31];
         else {
-            s32 n = (z - b0) / step;
+            s32 n = (z - b0) >> k;  // (z >= b0)
             if (n >= 31) d = r->fogTable[31];
             else {
                 s32 frac = (z - b0) - n * step;
-                d = r->fogTable[n] + (r->fogTable[n + 1] - r->fogTable[n]) * frac / step;
+                d = r->fogTable[n] + div_pow2((r->fogTable[n + 1] - r->fogTable[n]) * frac, k);
             }
         }
         if (d >= 127) d = 128;
@@ -546,7 +549,7 @@ static void fog_pass(void) {
 }
 
 // (diagnostics: ACWW_GPU3D_TIMING=1: the rasteriser's time per frame, printed every 1000 frames)
-#include <time.h>
+#include "../plat.h"  // (host_plat_time_ns: the C library's timespec_get isn't everywhere, e.g. newlib)
 static double sRenderNs, sRenderMax;
 static long sRenderFrames;
 static void timing_report(void) {
@@ -554,6 +557,29 @@ static void timing_report(void) {
         fprintf(stderr, "gpu3d: rasteriser %.3f ms a frame on average, %.3f ms at most, %ld frames\n",
                 sRenderNs / sRenderFrames / 1e6, sRenderMax / 1e6, sRenderFrames);
 }
+// the texture of texparam / texpal (its size from texparam), row by row, as the 3DS GPU's RGBA8 (r << 24 | g << 16 |
+// b << 8 | a): gpu3d_pica.c decodes each texture once with the same texel fetch as this rasteriser
+void g3_texture_rgba(u32 texparam, u32 texpal, u32 *out) {
+    int w = 8 << (texparam >> 20 & 7), h = 8 << (texparam >> 23 & 7);
+    for (int t = 0; t < h; t++)
+        for (int s = 0; s < w; s++) {
+            u32 c = g3_texel(texparam, texpal, s, t);
+            u32 r = c & 31, g = c >> 5 & 31, b = c >> 10 & 31, a = c >> 16 & 31;
+            *out++ = (r << 3 | r >> 2) << 24 | (g << 3 | g >> 2) << 16 | (b << 3 | b >> 2) << 8 | (a << 3 | a >> 2);
+        }
+}
+
+// ACWW_RENDERER3D=pica (the 3DS): the polygons drawn by its GPU (gpu3d_pica.c) into this rasteriser's buffers, then
+// its fog pass
+static int sPica, sPicaDirect, sPicaLastDirect;
+int gpu3d_use_pica(void) {
+    if (!g3p_init()) return 0;
+    sPica = 1;
+    return 1;
+}
+void gpu3d_pica_direct(int on) { sPicaDirect = on; }
+void *gpu3d_pica_picture(void) { return sPicaLastDirect ? g3p_picture() : 0; }
+
 // ACWW_RENDERER3D=wgpu: the polygons drawn by the GPU (gpu3d_wgpu.c), read back into the same frame buffer or not
 static int sWgpu, sWgpuReadback;
 int gpu3d_use_wgpu(void *device, void *queue, int scale, int readback) {
@@ -564,18 +590,38 @@ int gpu3d_use_wgpu(void *device, void *queue, int scale, int readback) {
 }
 void *gpu3d_wgpu_picture(void) { return g3w_picture(); }
 void g3_render(void) {
+    // the picture of the last one again: nothing it is drawn from changed (gG3Render is set at a swap, the
+    // textures change with VRAMCNT: g3_tex_setup). The game swaps every third frame.
+    static u32 drawnSwaps = ~0u, drawnGeneration = ~0u;
+#ifdef N3DS_DIRECT  // (the direct build: the same list again between the game's pictures, interpolated: gpu3d_pica.c)
+    int between = sPica && g3p_between(&gG3Render) && sPicaLastDirect;
+#endif
+    if (gG3Swaps == drawnSwaps && gG3VramGeneration == drawnGeneration && gG3VramGeneration != ~0u && !sDiag) {
+#ifdef N3DS_DIRECT
+        if (between) g3p_render(sR, sImgFlat, sPalFlat, 0, 0, 0, 0);
+#endif
+        return;
+    }
+    drawnSwaps = gG3Swaps;
+    drawnGeneration = gG3VramGeneration;
+    g3_render_wait();  // (the textures below)
     static int timing = -1;
-    struct timespec t0, t1;
+    uint64_t t0 = 0;
     if (timing < 0) {
         timing = getenv("ACWW_GPU3D_TIMING") != 0;
         (void)timing_report;
     }
-    if (timing) timespec_get(&t0, TIME_UTC);
+    if (timing) t0 = host_plat_time_ns();
     sR = &gG3Render;
-    g3_tex_setup();
+    int texChanged = g3_tex_setup();
     if (sWgpu)  // (the GPU's rasteriser: gpu3d_wgpu.c)
         g3w_render(sR, sImgFlat, sPalFlat, sWgpuReadback ? sColor : NULL);
-    else {
+    else if (sPica) {  // (the 3DS GPU's: gpu3d_pica.c; no anti-aliasing pass, it has no coverage)
+        // (straight to the GPU's compositing unless the colour fog needs the fog pass here)
+        sPicaLastDirect = sPicaDirect && (sR->dispcnt & 0xc0) != 0x80;
+        g3p_render(sR, sImgFlat, sPalFlat, texChanged, sPicaLastDirect ? 0 : sColor, sDepth, sFlags);
+        if (!sPicaLastDirect) fog_pass();
+    } else {
         clear_buffers();
         sPE.p = 0;
         for (int i = 0; i < sR->npoly; i++) draw_polygon(sR->poly[i], i);
@@ -583,10 +629,9 @@ void g3_render(void) {
         aa_pass();
     }
     sShown ^= 1;
-    if (!sWgpu || sWgpuReadback) memcpy(sFrameBuf[sShown], sColor, sizeof sColor);
+    if ((!sWgpu || sWgpuReadback) && !(sPica && sPicaLastDirect)) memcpy(sFrameBuf[sShown], sColor, sizeof sColor);
     if (timing) {
-        timespec_get(&t1, TIME_UTC);
-        double ns = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
+        double ns = (double)(host_plat_time_ns() - t0);
         sRenderNs += ns;
         if (ns > sRenderMax) sRenderMax = ns;
         sRenderFrames++;
@@ -616,4 +661,6 @@ int gpu3d_pixel_polygon(int x, int y, Gpu3dPolyInfo *info) {
     info->translucent = p->translucent;
     return 1;
 }
-void gpu3d_set_diagnostics(int on) { sDiag = on; }
+int gG3Diagnostics;
+void g3_render_wait(void) { if (sPica) g3p_wait(); }
+void gpu3d_set_diagnostics(int on) { sDiag = gG3Diagnostics = on; }

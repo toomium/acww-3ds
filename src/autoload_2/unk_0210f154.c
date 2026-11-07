@@ -127,6 +127,13 @@ u32 GX_ResetBankForTex(void) { return resetBankForX_(&data_021fcbe0); }
 // GX_ResetBankForTexPltt
 u32 GX_ResetBankForTexPltt(void) { return resetBankForX_(&data_021fcbe2); }
 
+#ifdef N3DS_DIRECT
+// the enhanced port (VRAM): the texture and texture palette banks, left where they are for an
+// upload (GX_BeginLoadTex, GX_BeginLoadTexPltt)
+u32 GXi_TexBanks(void) { return data_021fcbe0; }
+u32 GXi_TexPlttBanks(void) { return data_021fcbe2; }
+#endif
+
 // GXi_DisableBank (clears the VRAMCNT registers of the banks in *p)
 u32 disableBankForX_(u16 *p) {
     u32 v = *p;

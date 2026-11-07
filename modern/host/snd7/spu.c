@@ -245,6 +245,9 @@ static void mix_one(s16 out[2]) {
 }
 
 void spu_mix_until(u64 cycles) {
+#ifndef N3DS_DIRECT  // (the enhanced port mixes on a thread of its own: the game's thread's profile mark isn't its)
+    HOST_PROF(PROF_SOUND);
+#endif
     s16 buf[512 * 2];
     u32 n = 0;
     while (sMixed + SAMPLE_CYCLES <= cycles) {

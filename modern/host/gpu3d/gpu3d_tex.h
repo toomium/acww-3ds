@@ -24,7 +24,11 @@ static const u32 kBankSize[9] = {0x20000, 0x20000, 0x20000, 0x20000, 0x10000, 0x
 static u8 sImgFlat[4 * IMG_SLOT];
 static u8 sPalFlat[8 * PAL_SLOT];
 
-static void g3_tex_setup(void) {
+// returns 0, doing nothing, while the VRAM's mapping generation is the one of the last call (the slots unchanged)
+static int g3_tex_setup(void) {
+    static u32 done = ~0u;
+    if (gG3VramGeneration != ~0u && gG3VramGeneration == done) return 0;
+    done = gG3VramGeneration;
     memset(sNImg, 0, sizeof sNImg);
     memset(sNPal, 0, sizeof sNPal);
     if (gG3Banks)
@@ -55,6 +59,7 @@ static void g3_tex_setup(void) {
             for (u32 k = 0; k < PAL_SLOT; k++) d[k] |= sPal[s][i][k];
     }
     (void)kBankSize;
+    return 1;
 }
 
 static inline u8 img8(u32 a) { return sImgFlat[a & 0x7ffff]; }

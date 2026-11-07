@@ -163,6 +163,10 @@ void FSi_InitRom(u32 dma) {
             FS_LoadArchive(&data_021fea94, 0, fat->offset, fat->length, fnt->offset, fnt->length, FSi_ReadRomCallback,
                           (int (*)(FSArc *, void *, u32, u32))FSi_WriteDummyCallback);
         }
+#ifdef N3DS_DIRECT  // (the enhanced port: the EUR ROM's archive, modern/ds/n3ds_lang.c)
+        extern void N3ds_LangInit(void);
+        N3ds_LangInit();
+#endif
     }
 }
 

@@ -1,0 +1,23 @@
+; The 3DS's vertex shader for the own 3D engine's polygons (gpu3d_pica.c): the geometry engine has transformed and
+; lit them already. The position is in the DS screen's clip space; `target` maps it to the picture drawn into
+; (the identity where the two are the same).
+
+.fvec target[4]
+
+.out outpos position
+.out outclr color
+.out outtc0 texcoord0
+
+.alias inpos v0
+.alias inclr v1
+.alias intc0 v2
+
+.proc main
+	dp4 outpos.x, target[0], inpos
+	dp4 outpos.y, target[1], inpos
+	dp4 outpos.z, target[2], inpos
+	dp4 outpos.w, target[3], inpos
+	mov outclr, inclr
+	mov outtc0, intc0
+	end
+.end

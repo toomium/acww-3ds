@@ -24,6 +24,92 @@
 extern "C" {
 #endif
 
+// Gpu2dFrameInput.layers (the 3DS: its GPU composites, pica_display.c): instead of compositing, each line's layers
+// and its state. The BGs the GPU can draw from VRAM itself (Gpu2dLineState.gpuBg: text BGs in the standard palette,
+// affine BGs, no mosaic) are left to it; the others' and the OBJs' pixels come in the 3DS GPU's formats (256 x 192
+// each, row by row) with the windows' layer masks applied. Pixels of a layer the line doesn't show are left as they
+// were.
+typedef struct Gpu2dLineState {
+    uint32_t dispcnt;        // DISPCNT (bits 3 3D, 8-12 BG0-3 and OBJ shown, 13-15 windows)
+    uint8_t gpuBg;           // bit n: BG n is drawn by the GPU from VRAM (not in Gpu2dLayers.bg)
+    uint8_t bgKind[4];       // 1 text, 2 affine (for the BGs in gpuBg)
+    uint16_t bgcnt[4], bghofs[4], bgvofs[4];  // BGxCNT, BGxHOFS, BGxVOFS
+    int16_t affine[2][4];    // BG2, BG3: PA, PB, PC, PD
+    uint16_t winin, winout;  // WININ, WINOUT (with DISPCNT bits 13-15: Gpu2dLayers.region)
+    uint16_t bldcnt, bldalpha, bldy, backdrop;  // BLDCNT, BLDALPHA, BLDY; palette colour 0 (BGR555)
+    uint16_t masterBright;   // MASTER_BRIGHT
+    int16_t hofs3d;          // BG0HOFS (the 3D layer's scroll), -256 to 255
+    uint8_t prio[4];         // BG0-3's priority
+    uint8_t white;           // 1: the line is white (display off, forced blank, engine off; VRAM and main memory
+                             // display, which the game doesn't use, too)
+    // with sprites (Gpu2dLayers.sprite; else 0): the windows' shapes instead of Gpu2dLayers.region: WIN0H, WIN1H,
+    // and which of windows 0 and 1 the line is inside vertically (bits 0, 1)
+    uint16_t winh[2];
+    uint8_t winV;
+} Gpu2dLineState;
+// The OBJs as sprites (the 3DS's direct build): with Gpu2dLayers.sprite set, the OBJs
+// aren't drawn line by line into `obj`: each shown OBJ's box comes once a frame as its pixels in the atlas `sprite`
+// (GPU2D_ATLAS_W x GPU2D_ATLAS_H, RGBA8 as `obj`'s with alpha 255, 0 transparent; affine ones transformed) and its
+// place, for the GPU to draw; the windows too (Gpu2dLineState.winh, winV; the OBJ window from its OBJs' sprites),
+// not as Gpu2dLayers.region. (A BG the CPU draws then has the windows applied without the OBJ window.)
+enum { GPU2D_ATLAS_W = 512, GPU2D_ATLAS_H = 256 };
+typedef struct Gpu2dSprite {
+    int16_t x, y;   // the box's top left on the screen (y below 0: wrapped round from the bottom)
+    uint16_t w, h;  // the box (twice the OBJ's size for a double-size affine one)
+    uint16_t u, v;  // its pixels in the atlas
+    uint8_t prio;
+    uint8_t window;  // 1: an OBJ-window OBJ (it shapes the OBJ window, isn't shown)
+#ifdef N3DS_DIRECT
+    uint8_t anchor;  // the UI element it belongs to (gpu2d_obj_anchors; 0 none)
+#endif
+} Gpu2dSprite;
+#ifdef N3DS_DIRECT
+// The enhanced port's UI at the wide screens' edges: an element's anchor, the edges the
+// host moves it to (by the margins' width), or GPU2D_NEAR | id << 5 (id 0-7): towards the edges its OBJs (those with
+// that anchor) are in the outer third of
+enum { GPU2D_LEFT = 1, GPU2D_RIGHT = 2, GPU2D_TOP = 4, GPU2D_BOTTOM = 8, GPU2D_NEAR = 0x10 };
+typedef struct Gpu2dBgAnchor {
+    uint8_t bgs, windows, anchor;  // the BGs (bit n: BGn) and windows (bit w: window w) moved, and where
+    uint16_t bgcnt[4];             // the BGs' BGxCNT when given: moved only on lines where they are the same
+} Gpu2dBgAnchor;
+// The enhanced port's wide view: an affine BG whose parameters the game changes line by
+// line (the sky's clouds) on the lines beyond the DS's screen, as the game would set them there (gpu2d_margin_affine):
+// lines -GPU2D_MARGIN to -1, then 192 to 191 + GPU2D_MARGIN; PA and the reference point (PB, PC, PD as at the edge line)
+enum { GPU2D_MARGIN = 24 };
+typedef struct Gpu2dMarginAffine {
+    int bg;  // 2 or 3; 0: none
+    int16_t pa[2 * GPU2D_MARGIN];
+    int32_t x[2 * GPU2D_MARGIN], y[2 * GPU2D_MARGIN];
+} Gpu2dMarginAffine;
+#endif
+typedef struct Gpu2dLayers {
+    uint16_t *bg[2][4];      // per engine BG0-3: RGBA5551 (r << 11 | g << 6 | b << 1 | 1), 0 transparent
+    uint32_t *obj[2];        // OBJs: RGBA8 (r << 24 | g << 16 | b << 8 | (priority + 1) * 32), 0 transparent
+    // with windows (DISPCNT bits 13-15): the window each pixel is in, as alpha 63 + 64 * region (0 outside, 1
+    // window 0, 2 window 1, 3 the OBJ window); WININ / WINOUT say what each shows
+    uint32_t *region[2];
+    uint8_t objPrio[2][192];  // the OBJ priorities with pixels on each line (bit 0-3: priority 0-3)
+    Gpu2dLineState line[2][192];
+    int32_t ref[2][192][4];  // BG2 X, Y, BG3 X, Y: the affine BGs' internal reference points at each line (20.8)
+    // each engine's BG VRAM (16 KB granules, the address mask) and BG palette (0x200 bytes), as at the frame's end
+    const uint8_t *const *bgGran[2];
+    uint32_t bgMask[2];
+    const uint8_t *palette[2];
+    int topEngine;           // the engine on the top screen (POWCNT1 bit 15)
+    uint32_t *sprite;        // the OBJs as sprites (above; NULL: in `obj`)
+    Gpu2dSprite sprites[2][128];  // per engine, in OAM order
+    int nsprites[2];
+#ifdef N3DS_DIRECT
+    Gpu2dMarginAffine margin[2];  // per engine, for this frame
+    int iris;                     // the screen transitions' iris (gpu2d_iris) for this frame
+    int menuWipe;                 // the menus' wipe (gpu2d_menu_wipe) for this frame
+    const uint32_t *optPic;       // the options page's picture (gpu2d_options) and its serial, for this frame
+    uint32_t optSerial;
+    int optPageY, optBtnY;
+    Gpu2dBgAnchor bgAnchor[2];    // per engine (gpu2d_bg_anchor), for this frame
+#endif
+} Gpu2dLayers;
+
 typedef struct Gpu2dFrameInput {
     const uint8_t *bank[9];   // VRAM banks A-I (128, 128, 128, 128, 64, 16, 16, 32, 16 KB)
     const uint8_t *palette;   // 0x800 bytes: engine A BG, A OBJ, B BG, B OBJ (0x200 each)
@@ -32,14 +118,21 @@ typedef struct Gpu2dFrameInput {
     // red bits 0-5, green 8-13, blue 16-21, alpha 24-28 (0-31; 0: no pixel), not scrolled; NULL: no 3D picture
     const uint32_t *lines3d;
     // called after each visible line (0-191) of both engines, the H-blank: register writes (gpu2d_write*) and
-    // palette changes made there show from the next line on (NULL: none)
-    void (*hblank)(int line, void *context);
+    // palette changes made there show from the next line on (NULL: none); it returns 0 if nothing ran there that
+    // could change the palettes or OAM
+    int (*hblank)(int line, void *context);
     void *hblankContext;
     // 1: the 3D layer is composited by the caller (lines3d NULL; the GPU: gpu2d_deferred), not here
     int defer3d;
     // the pictures drawn by a GPU (gpu2d_gpu_frame; implies defer3d): 1 the frame's inputs recorded for it and no
     // pixels drawn here, 2 both (to check the GPU's against these)
     int gpu;
+    // the layers to the caller instead of the pictures (gpu2d_screen then stale); NULL: none
+    Gpu2dLayers *layers;
+    // with layers: only each line's state recorded here (with the H-blanks), and VRAM's banks, the palettes and OAM
+    // copied; the layers are drawn from that by gpu2d_draw_layers, later and on another thread (the 3DS's GPU
+    // thread). Gpu2dLayers.bgGran and .palette then point to the copies.
+    int deferLayers;
 } Gpu2dFrameInput;
 
 void gpu2d_reset(void);
@@ -50,6 +143,35 @@ void gpu2d_write32(uint32_t addr, uint32_t value);
 uint32_t gpu2d_read32(uint32_t addr);  // what was written (diagnostics)
 
 void gpu2d_render_frame(const Gpu2dFrameInput *in);
+// deferLayers: the record the last frame went to (two in turn), and drawing a record's layers (and Gpu2dLayers'
+// frame fields; not while the record after the next is made)
+int gpu2d_record(void);
+void gpu2d_draw_layers(int record);
+#ifdef N3DS_DIRECT
+// an affine BG's parameters on a line beyond the DS's screen (Gpu2dMarginAffine), given by the game before a frame (its
+// V-blank) for that frame
+void gpu2d_margin_affine(int engine, int bg, int line, int pa, int32_t x, int32_t y);
+// the screen transitions' iris, drawn by the host over both whole screens: 0 open to 0x1000 closed, -1 none; given by
+// the game at its V-blank, from the next frame on
+void gpu2d_iris(int progress);
+// the menus' wipe (MenuScreen_WipeInVBlank / WipeOutVBlank): engine A's window 1, its left edge on line y at
+// pos - (a zigzag of 24 lines up and 24 down), drawn by the host over the whole wide screen; given by the game at its
+// V-blank, from the next frame on, kept while that window is on (-1 none)
+void gpu2d_menu_wipe(int pos);
+// the options page (modern/host/options_3ds.c): a 256x192 RGBA picture (0xRRGGBBAA; the page in lines 17-191, the pause
+// menu's button at (0, 0), 24x16), drawn over the bottom screen; serial changes whenever its pixels did (the host
+// uploads it then), pageY the page's offset downwards (0 in place, 192 or more not shown: it slides); from the next
+// frame on, kept until changed. The picture must stay as it is until two more serials have been given.
+#define GPU2D_NO_BTN (-999)
+void gpu2d_options(const uint32_t *pic, uint32_t serial, int pageY);
+// (gpu2d_opt_button, n3ds_ui.h: the button's top line, as an OBJ: shown with the next OAM given, for that OAM only)
+// the UI elements' anchors (Gpu2dSprite.anchor): one for each of an engine's 128 OAM entries, given with the OAM the game
+// loads (0x400 bytes) at its V-blank; an entry keeps its anchor while OAM holds what it held then
+void gpu2d_obj_anchors(int engine, const void *oam, const uint8_t *anchors);
+// BGs and windows that make a UI element with the OBJs of the same anchor (Gpu2dBgAnchor); given by the game when it
+// shows them (their BGxCNT set up), from the next frame on, kept until changed (bgs 0: none)
+void gpu2d_bg_anchor(int engine, int bgs, int windows, int anchor);
+#endif
 // screen 0 top, 1 bottom (POWCNT1 bit 15 decides which engine shows where): 256x192 pixels, 0xffRRGGBB
 const uint32_t *gpu2d_screen(int screen);
 

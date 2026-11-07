@@ -13,6 +13,9 @@ s32 func_01ffcb0c(s32 a, s32 b);
 s32 FX_Div(s32 a, s32 b);
 void VEC_CrossProduct(void *dst, void *a, void *b);
 void VEC_Normalize(void *dst, void *src);
+#ifdef N3DS_DIRECT
+int gpu3d_wide_wanted(void);  // (modern/host/gpu3d/gpu3d_geom.c: ACWW_WIDE)
+#endif
 }
 
 extern s16 data_02135f44[];
@@ -30,6 +33,16 @@ void ViewFrustum::calcPlanes() {
     s32 s = FX_Div(data_02135f44[idx * 2], data_02135f44[idx * 2 + 1]);
     s32 y = func_01ffcb0c(nearClip, s);
     s32 x = func_01ffcb0c(aspect, y);
+#ifdef N3DS_DIRECT
+    // The wide view: the side planes through the wide 3D picture's edges, 400 x 240 around the DS's 256 x 192
+    // (gpu3d.h GPU3D_WIDE_X / Y), so that what is drawn there is there (and its actors run: Actor::preExecute)
+    static int wide = -1;
+    if (wide < 0) wide = gpu3d_wide_wanted();
+    if (wide) {
+        x = x * (128 + 72) / 128;
+        y = y * (96 + 24) / 96;
+    }
+#endif
     v[0] = -x;
     v[1] = -y;
     v[2] = -nearClip;

@@ -31,6 +31,7 @@ build_host_guards.ninja
 build_host64_guards.ninja
 build_host_a64*.ninja
 build_host_win64*.ninja
+build_host_3ds*.ninja
 build_host64_asan.ninja
 build_host*_oracle.ninja
 /toolchains/

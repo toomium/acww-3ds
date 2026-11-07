@@ -6291,6 +6291,30 @@ extern "C" void Sky_UpdateLineTables()
     gWeatherManager.lineBufferIndex = idx;
 }
 
+#ifdef N3DS_DIRECT
+extern "C" void gpu2d_margin_affine(int engine, int bg, int line, int pa, s32 x, s32 y);  // (modern/host/gpu2d)
+// The enhanced port's wide view: the cloud BG on the 24 lines above and below the DS's
+// screen, as the line tables would have them if they went on (Sky_UpdateLineTables's formulas; the screen's line L
+// shows table line L - 1 + the screen offset, as in Sky_HBlankMain / Sub; line 0 that of line 1 (Sky_VBlankMain /
+// Sub), and the lines above go on from it), so that the clouds' perspective goes on beyond the DS's edges
+static void Sky_GiveMarginLines(s32 engine)
+{
+    s32 idx = gWeatherManager.lineBufferIndex;
+    s32 off = gWeatherManager.screenOffsetY[gWeatherManager.bufferIndex];
+    for (s32 line = -24; line < 0xc0 + 24; line++) {
+        if (line == 0) line = 0xc0;
+        s32 j = (line < 0 ? line : line - 1) + off;
+        s32 t = -(j * 0x100) / 0xc0;
+        s32 pa = DS_DIV(0x10000, (t + 0x200));
+        s32 x = sSkyLineScrollX[idx] - (pa - 0x100) * 0x80;
+        s32 u = (j * 0xc000 / 0xc0 + 0x3000) / 0xc0;
+        s32 y = sSkyLineScrollY[idx] + (u * u >> 8) * 0xc0;
+        if (engine) x = (u16)x, y = (u16)y;  // (as Sky_HBlankSub writes them)
+        gpu2d_margin_affine(engine, 3, line, pa, x, y);
+    }
+}
+#endif
+
 extern "C" void Sky_VBlankSub()
 {
     u8 t[2];
@@ -6301,9 +6325,15 @@ extern "C" void Sky_VBlankSub()
     v2 = sSkyGradient.keyColors[1];
     REG16(HW_PLTT) = v2;
     SkyLineAffine *e = gWeatherManager.lineAffine[gWeatherManager.lineBufferIndex];
+#ifdef N3DS_DIRECT  // (line 0 from the screen offset's table line, as line 1: the wide view's margin above goes on from it)
+    e += y < 0xc0 ? y : 0xbf;
+#endif
     IO_W(&REG16(0x4001030), e->pa);
     IO_W(&REG32(0x4001038), e->x);
     IO_W(&REG32(0x400103c), e->y);
+#ifdef N3DS_DIRECT
+    Sky_GiveMarginLines(1);
+#endif
     Clock_GetMinuteHour(t);
     if (t[1] >= 6 && t[1] < 0x12) {
         IO_W(&REG32(0x4001000), IO_R(&REG32(0x4001000)) & 0xfffffdff);
@@ -6333,9 +6363,15 @@ extern "C" void Sky_VBlankMain()
     v2 = sSkyGradient.keyColors[0];
     REG16(HW_PLTT) = v2;
     SkyLineAffine *e = gWeatherManager.lineAffine[gWeatherManager.lineBufferIndex];
+#ifdef N3DS_DIRECT  // (line 0 from the screen offset's table line, as line 1: the wide view's margin above goes on from it)
+    e += y < 0xc0 ? y : 0xbf;
+#endif
     IO_W(&REG16(0x4000030), e->pa);
     IO_W(&REG32(0x4000038), e->x);
     IO_W(&REG32(0x400003c), e->y);
+#ifdef N3DS_DIRECT
+    Sky_GiveMarginLines(0);
+#endif
     Clock_GetMinuteHour(t);
     if (t[1] >= 6 && t[1] < 0x12) {
         IO_W(&REG32(0x4000000), IO_R(&REG32(0x4000000)) & 0xfffffdff);

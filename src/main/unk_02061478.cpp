@@ -1,4 +1,5 @@
 #include "types.h"
+#include "n3ds_options.h"
 #include "talk/MsgStringAttr.h"
 #include "item/ItemId.h"
 #include "sys/RecordFile.h"
@@ -295,6 +296,9 @@ static inline BOOL Unk_020622cc_IsFree(u16 *g, u16 *t) {
 
 static inline u8 *Unk_02061e0c_Lookup(u32 v) {
     u32 i = v & 0xfff;
+#ifdef N3DS_DIRECT
+    i = n3ds_item_record(i);  // (n3ds_options.h: a fruit stack's record is its fruit's)
+#endif
     if (i >= 0x56e) i = 0x56d;
     return gItemInfo.getAlways()->getRecord(i);
 }
@@ -318,6 +322,9 @@ static inline u16 Unk_02061e0c_Conv(u16 *p) {
 
 static inline u8 *Unk_02062024_Lookup(u32 v) {
     u32 i = v & 0xfff;
+#ifdef N3DS_DIRECT
+    i = n3ds_item_record(i);  // (n3ds_options.h: a fruit stack's record is its fruit's)
+#endif
     if (i >= 0x56e) i = 0x56d;
     return gItemInfo.getDma()->getRecord(i);
 }
@@ -326,6 +333,9 @@ extern "C" u16 *ItemInfo_GetName(u16 *p);
 
 static inline BOOL Unk_0206198c_Tail(u32 v, u32 sh) {
     u32 i = v & 0xfff;
+#ifdef N3DS_DIRECT
+    i = n3ds_item_record(i);  // (n3ds_options.h: a fruit stack's record is its fruit's)
+#endif
     if (i >= 0x56e) i = 0x56d;
     u8 *r = gItemInfo.getAlways()->getRecord(i);
     if (r) return (r[9] >> sh) & 1 ? TRUE : FALSE;
@@ -432,10 +442,16 @@ u16 *ItemInfo_GetName(u16 *p) {
     if (Unk_02061e0c_InRange(p)) {
         volatile u16 tmp = Unk_02061e0c_Conv(p);
         u8 *r = Unk_02062024_Lookup(tmp);
+#ifdef N3DS_DIRECT
+        if (r && N3ds_LangEur()) r++;  // (the EUR record's form byte, n3ds_options.h)
+#endif
         if (r) return (u16 *)(r + 2);
         return 0;
     }
     u8 *r = Unk_02062024_Lookup(*p);
+#ifdef N3DS_DIRECT
+    if (r && N3ds_LangEur()) r++;  // (the EUR record's form byte, n3ds_options.h)
+#endif
     if (r) return (u16 *)(r + 2);
     return 0;
 }
@@ -446,7 +462,14 @@ s32 ItemInfo_GetUnk02(u16 *p) {
     return 0;
 }
 
+#ifdef N3DS_DIRECT
+s32 ItemInfo_GetNameForm(u16 *p) {  // (the EUR record's form byte, n3ds_options.h)
+    u8 *r = N3ds_LangEur() ? Unk_02062024_Lookup(*p) : 0;
+    return r ? (s8)r[2] : -1;
+}
+#else
 s32 ItemInfo_GetNameForm(u16 *) { return -1; }
+#endif
 
 s32 ItemInfo_GetNameAttrB(u16 *p) {
     u8 *r = Unk_02062024_Lookup(*p);
@@ -509,6 +532,9 @@ s32 ItemInfo_GetClass(u16 *p) {
 
 s32 ItemInfo_GetUnk07(u16 *p) {
     u32 i = *p & 0xfff;
+#ifdef N3DS_DIRECT
+    i = n3ds_item_record(i);  // (n3ds_options.h: a fruit stack's record is its fruit's)
+#endif
     if (i >= 0x56e) i = 0x56d;
     u8 *r = gItemInfo.getAlways()->getRecord(i);
     if (r) return r[7];
@@ -518,7 +544,10 @@ s32 ItemInfo_GetUnk07(u16 *p) {
 s32 ItemInfo_GetSeason(u16 *p) {
     if (ItemInfo_GetKind(p) == 5) {
         u32 i = *p & 0xfff;
-        if (i >= 0x56e) i = 0x56d;
+    #ifdef N3DS_DIRECT
+    i = n3ds_item_record(i);  // (n3ds_options.h: a fruit stack's record is its fruit's)
+#endif
+    if (i >= 0x56e) i = 0x56d;
         u8 *r = gItemInfo.getAlways()->getRecord(i);
         if (r) return r[8];
         return 0;
@@ -608,6 +637,9 @@ extern "C" BOOL ItemInfo_TestFlag4(u16 *p) {
 
 extern "C" u32 ItemInfo_GetIndoorUnk1(u16 *p) {
     u32 i = *p & 0xfff;
+#ifdef N3DS_DIRECT
+    i = n3ds_item_record(i);  // (n3ds_options.h: a fruit stack's record is its fruit's)
+#endif
     if (i >= 0x56e) i = 0x56d;
     u8 *r = gItemInfo.getIndoor()->getRecord(i);
     if (r) return r[1];
@@ -616,6 +648,9 @@ extern "C" u32 ItemInfo_GetIndoorUnk1(u16 *p) {
 
 extern "C" u32 ItemInfo_GetIndoorUnk0(u16 *p) {
     u32 i = *p & 0xfff;
+#ifdef N3DS_DIRECT
+    i = n3ds_item_record(i);  // (n3ds_options.h: a fruit stack's record is its fruit's)
+#endif
     if (i >= 0x56e) i = 0x56d;
     u8 *r = gItemInfo.getIndoor()->getRecord(i);
     if (r) return r[0];

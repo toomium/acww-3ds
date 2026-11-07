@@ -63,6 +63,7 @@
 #include "proto/main/unk_020b2c50.h"
 #include "proto/main/unk_020742f4.h"
 #include "proto/main/unk_02097444.h"
+#include "n3ds_ui.h"
 
 struct VillagerState;
 
@@ -1921,15 +1922,26 @@ void TalkFrame::uploadBg()
     DC_FlushRange(screenData, 0x800);
     GX_LoadBG2Scr(screenData, 0, 0x800);
 }
+#ifdef N3DS_DIRECT
+int gN3dsTalkBgShown = 0;  // (n3ds_ui.h)
+#endif
 extern "C" void TalkFrame_ShowBg()
 {
     Gfx2d_ShowMainPlanes(4);
     Gfx2d_EnableMainWindows(1);
+#ifdef N3DS_DIRECT  // (the text box, BG2 in window 0, at the wide screen's bottom edge)
+    gpu2d_bg_anchor(0, 4, 1, N3DS_UI_BOTTOM);
+    gN3dsTalkBgShown = 1;
+#endif
 }
 extern "C" void TalkFrame_HideBg()
 {
     Gfx2d_HideMainPlanes(4);
     Gfx2d_DisableMainWindows(1);
+#ifdef N3DS_DIRECT
+    gpu2d_bg_anchor(0, 0, 0, 0);
+    gN3dsTalkBgShown = 0;
+#endif
 }
 void TalkFrame::setScrollY(s32 y) { setScroll(0, y); }
 void TalkFrame::setScroll(s32 x, s32 y)
@@ -2276,8 +2288,15 @@ void TalkWindowState::update() {
     if (state != 0 && state != 5) storeInputMode();
 }
 void TalkWindowState::draw() {
+#ifdef N3DS_DIRECT  // (n3ds_ui.h: the text box at the wide screen's bottom edge, its OBJs with its BG: TalkFrame_ShowBg)
+    int n = Oam_Count(0);
     frame.draw();
     choiceMenu.draw();
+    Oam_Anchor(0, n, N3DS_UI_BOTTOM);
+#else
+    frame.draw();
+    choiceMenu.draw();
+#endif
 }
 extern "C" BOOL Talk_IsAltTextEnabled() {
     if (PlayerOptions_IsHiragana() == 0) return TRUE;

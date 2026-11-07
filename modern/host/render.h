@@ -11,12 +11,17 @@ void render_init(void);
 // 0x04001000-0x0400106f, POWCNT1, VRAMCNT, the 3D registers and command ports
 void render_write8(u32 addr, u8 v);
 void render_write16(u32 addr, u16 v);
+// the same, words to one 3D command port (HostIo_Send32)
+void render_write32_n(u32 addr, const u32 *v, u32 n);
 void render_write32(u32 addr, u32 v);
 u32 render_read32(u32 addr);       // the 3D engine's status and results (0x04000320, 0x04000600-0x040006a3)
 void render_frame(void);           // at VBlank: the frame from the VRAM banks, palettes, OAM and registers
-const u32 *render_screen(int screen);  // 0 top, 1 bottom: 256x192 pixels, 0x00RRGGBB (the top byte is ignored)
+const uint32_t *render_screen(int screen);  // 0 top, 1 bottom: 256x192 pixels, 0x00RRGGBB (the top byte is ignored)
 // 1: the screens are put together by the GPU (wgpu_display.h, which can show them): render_screen reads them back
 int render_on_gpu(void);
+// 1: the GPU shows the screens itself (wgpu_display.c presenting, the 3DS's pica_display.c): render_screen would
+// read them back
+int render_presenting(void);
 int render_gx_fifo_irq_level(void);    // the GX FIFO interrupt line (IRQ 21)
 void render_debug(void);           // ACWW_STATS diagnostics
 void render_exit_report(void);     // ACWW_RENDER_COMPARE's summary, ACWW_GPU2D_FEATURES

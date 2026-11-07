@@ -55,6 +55,8 @@ static DWORD WINAPI thread_main(LPVOID p) {
     s.fn(s.arg);
     return 0;
 }
+void host_plat_init(void) {}
+
 void host_plat_restart(char **argv) {
     char path[MAX_PATH];
     if (!GetModuleFileNameA(NULL, path, sizeof path)) return;
@@ -71,6 +73,9 @@ int host_plat_thread_start(void (*fn)(void *), void *arg) {
     CloseHandle(h);
     return 1;
 }
+
+// (the system shares the cores between threads by itself)
+int host_plat_sampler_start(void (*fn)(void *), void *arg, int core1) { (void)core1; return host_plat_thread_start(fn, arg); }
 
 static size_t page_size(void) {
     static size_t page;

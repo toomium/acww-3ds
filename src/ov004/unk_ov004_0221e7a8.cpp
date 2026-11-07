@@ -4,6 +4,7 @@
 // mwcc-version: 1.2/base
 // mwcc-flags: -str reuse
 #include "types.h"
+#include "n3ds_options.h"
 #include "room/FtrManager.h"
 #include "sys/NNSFndArchive.h"
 #include "gfx/VecFx32.h"
@@ -1899,7 +1900,11 @@ extern "C" void PlayerActor_PickUpItemUpdateState(Obj *o) {
         }
         {
             BOOL ok;
+#ifdef N3DS_DIRECT
+            if (Pocket_FindEmpty() == -1 && Pocket_FindFruitStack(&o->actionItem) == -1) {  // (or onto a fruit stack)
+#else
             if (Pocket_FindEmpty() == -1) {
+#endif
                 if (Item_IsFurniture(&o->actionItem) != 0) {
                     w.b = 0xfff1;
                     u32 r6 = Item_GetFurnitureIndex(&o->actionItem);

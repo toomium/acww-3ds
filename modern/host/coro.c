@@ -132,6 +132,13 @@ void *host_coro_prepare(void *stack, size_t size, void (*fn)(void *), void *arg)
     sp[1] = (uint64_t)(uintptr_t)arg;       // x20
     sp[11] = (uint64_t)(uintptr_t)host_coro_boot;  // x30
     return sp;
+#elif defined(__arm__)
+    uint32_t *sp = (uint32_t *)top - 26;    // d8-d15 (16 words), r4-r12, lr; sp = top after they are popped
+    memset(sp, 0, 26 * sizeof *sp);
+    sp[16] = (uint32_t)(uintptr_t)fn;       // r4
+    sp[17] = (uint32_t)(uintptr_t)arg;      // r5
+    sp[25] = (uint32_t)(uintptr_t)host_coro_boot;  // lr
+    return sp;
 #else
 #error "coro.c: no stack switch for this CPU yet"
 #endif

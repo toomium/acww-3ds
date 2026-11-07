@@ -11,6 +11,9 @@
 
 #include "host.h"
 #include "host_mem.h"
+#ifdef N3DS_DIRECT
+#include "options_3ds.h"
+#endif
 #include "plat.h"
 #include "sys/CardCmd.h"
 
@@ -35,6 +38,7 @@ u64 pxi7_next_due(void) {
     return d;
 }
 void pxi7_run_due(void) {
+    HOST_PROF(PROF_ARM7);
     for (int i = 0; i < sLaterCount;) {
         if (sLater[i].due <= host_cycles()) { u32 w = sLater[i].word; sLater[i] = sLater[--sLaterCount]; pxi7_send(w); }
         else i++;
@@ -66,6 +70,7 @@ void pxi7_prepare_read(u32 a) {
 }
 
 void pxi7_sync_written(u32 value) {
+    HOST_PROF(PROF_ARM7);
     // the start-up handshake (PXI_InitFifo): the ARM7 answers each value with the next one
     sArm7Sync = ((value >> 8) + 1) & 0xf;
 }
@@ -112,7 +117,7 @@ static u8 sNvStatus;  // bit 1: write enable latch
 // Firmware Header", "DS Firmware User Settings") says is read - the user settings' place in the header, and the user
 // settings twice (as after a first start: owner "PLAYER", English, a birthday of 1 January, the touch screen
 // calibration of a typical unit), each with its CRC. The game reads the header and the Wi-Fi settings (left erased:
-// no access point set up); the runtime the calibration (tp_raw).
+// no access point set up); the game and the runtime the calibration (user_settings, tp_raw).
 static u16 fw_crc16(u16 crc, const u8 *p, u32 n) {
     for (u32 i = 0; i < n; i++) {
         crc ^= p[i];
@@ -145,6 +150,22 @@ static void default_firmware(void) {
         u[0x72] = (u8)crc, u[0x73] = (u8)(crc >> 8);
     }
     sNvramSize = SIZE;
+}
+
+// the user settings where the DS's boot firmware leaves them for the game (HW_NVRAM_USER_INFO, 0x027ffc80: the
+// touch calibration of TP_GetUserInfo, OS_GetOwnerInfo): the newer of the two copies with a right CRC. Without them
+// the game's calibration is 0 and every touch is at 0,0. (0x70 bytes, as the DS: the MAC address after them is
+// wm7.c's.)
+static void user_settings(void) {
+    u32 at = (sNvram[0x20] | sNvram[0x21] << 8) * 8;
+    if (at + 0x200 > sNvramSize) return;
+    const u8 *pick = 0;
+    for (int copy = 0; copy < 2; copy++) {
+        const u8 *u = sNvram + at + copy * 0x100;
+        if (fw_crc16(0xffff, u, 0x70) != (u16)(u[0x72] | u[0x73] << 8)) continue;
+        if (!pick || ((u[0x70] - pick[0x70]) & 0x7f) == 1) pick = u;  // (the update counter, mod 0x80)
+    }
+    if (pick) memcpy(gHostSysWork.nvramUserInfo, pick, 0x70);
 }
 
 static void nvram_command(void) {
@@ -265,9 +286,47 @@ static void save_load(u32 size) {
         fprintf(stderr, "pxi7: save memory %#x bytes, %#zx loaded from %s\n", size, n, sSavePath);
     }
 }
-// write a changed range through to the file (the whole memory when the file is new)
+// a changed range, written to the file (the whole memory when the file is new) once the game has written nothing for
+// half a second: a save is hundreds of page writes, each one through to the SD card took the 3DS seconds of slow
+// frames. pxi7_save_flush also runs before the program ends and when the 3DS goes to the home menu or to sleep.
+static u32 sDirtyLo = ~0u, sDirtyHi;
+static u64 sFlushAt;
 static void save_store(u32 at, u32 len) {
     if (!sSavePath || at >= sSaveSize) return;
+    if (len > sSaveSize - at) len = sSaveSize - at;
+    if (at < sDirtyLo) sDirtyLo = at;
+    if (at + len > sDirtyHi) sDirtyHi = at + len;
+    sFlushAt = host_frame() + 30;
+}
+// (a write that takes long is reported: on the 3DS one may hold the game up)
+static void save_file_write(u32 at, const u8 *data, u32 len) {
+    uint64_t t0 = host_plat_time_ns();
+    fseek(sSaveFile, (long)at, SEEK_SET);
+    fwrite(data, 1, len, sSaveFile);
+    fflush(sSaveFile);
+    double ms = (double)(host_plat_time_ns() - t0) * 1e-6;
+    if (ms > 50) fprintf(stderr, "pxi7: the save file's %u bytes written in %.0f ms\n", len, ms);
+}
+#ifdef N3DS_DIRECT
+// The enhanced port: the flush 30 frames after the last change writes in the background
+// (pxi7_vblank), the changed range copied first, one write at a time; the others (the program's end, the home menu,
+// sleep) wait for it and write at once.
+static u8 *sPending;
+static u32 sPendingAt, sPendingLen;
+static int sWriting;
+static void write_job(void *arg) {
+    (void)arg;
+    save_file_write(sPendingAt, sPending, sPendingLen);
+    __atomic_store_n(&sWriting, 0, __ATOMIC_RELEASE);
+}
+#endif
+void pxi7_save_flush(void) {
+#ifdef N3DS_DIRECT
+    while (__atomic_load_n(&sWriting, __ATOMIC_ACQUIRE)) host_plat_sleep_ms(1);
+#endif
+    if (sDirtyLo >= sDirtyHi || !sSavePath) return;
+    u32 at = sDirtyLo, len = sDirtyHi - sDirtyLo;
+    sDirtyLo = ~0u, sDirtyHi = 0;
     if (!sSaveFile) {
         sSaveFile = fopen(sSavePath, "w+b");
         if (!sSaveFile) { perror(sSavePath); sSavePath = 0; return; }
@@ -276,23 +335,13 @@ static void save_store(u32 at, u32 len) {
     long have = ftell(sSaveFile);
     if (have >= 0 && have < (long)sSaveSize)  // a new or short file: complete it with the memory's rest first
         fwrite(sSave + have, 1, sSaveSize - (u32)have, sSaveFile);
-    if (len > sSaveSize - at) len = sSaveSize - at;
-    fseek(sSaveFile, (long)at, SEEK_SET);
-    fwrite(sSave + at, 1, len, sSaveFile);
-    fflush(sSaveFile);
+    save_file_write(at, sSave + at, len);
 }
 
-static void card_request(u32 data) {
-    if (sCardWantBlock) { sCardBlock = take_pointer(11); sCardWantBlock = 0; pxi7_send_after(11 | 1u << 5, 20000); return; }
-    CARDCmd *b = sCardBlock;
-    if (data == 0) { sCardWantBlock = 1; return; }
-    if (!b) { pxi7_send_after(11 | 1u << 5, 20000); return; }
+// one request on the save memory: a card address and ARM9 memory, the card's result code (0 OK)
+static u32 backup_op(u32 op, uintptr_t src, uintptr_t dst, u32 len) {
     u32 result = 0;
-    if (b->f18) save_load(b->f18);
-    // the block's source and destination: a card address and ARM9 memory (include/sys/CardCmd.h)
-    uintptr_t src = b->srcBuf, dst = b->dstBuf;
-    u32 len = b->len;
-    switch (data) {
+    switch (op) {
     case 6:  // read: card address src to memory dst
         for (u32 i = 0; i < len; i++) ((u8 *)dst)[i] = src + i < sSaveSize ? sSave[src + i] : 0xff;
         break;
@@ -313,10 +362,31 @@ static void card_request(u32 data) {
         break;
     default: break;  // identify, read id, status ...
     }
+    return result;
+}
+
+static void card_request(u32 data) {
+    if (sCardWantBlock) { sCardBlock = take_pointer(11); sCardWantBlock = 0; pxi7_send_after(11 | 1u << 5, 20000); return; }
+    CARDCmd *b = sCardBlock;
+    if (data == 0) { sCardWantBlock = 1; return; }
+    if (!b) { pxi7_send_after(11 | 1u << 5, 20000); return; }
+    if (b->f18) save_load(b->f18);
+    // the block's source and destination: a card address and ARM9 memory (include/sys/CardCmd.h)
+    uintptr_t src = b->srcBuf, dst = b->dstBuf;
+    u32 len = b->len, result = backup_op(data, src, dst, len);
     b->result = result;
     if (gHostVerbose) fprintf(stderr, "pxi7: card %u src %llx dst %llx len %x -> %u (frame %llu)\n", data, (unsigned long long)src, (unsigned long long)dst, len, result,
                               (unsigned long long)host_frame());
     pxi7_send_after(11 | 1u << 5, 20000);
+}
+
+// The enhanced port's save (N3DS_DIRECT: CARDi_RequestStreamCommand): a whole read (6) or
+// write / program (7, 8) at once, not page by page through the ARM7 with a reply to wait for; a write's verify
+// (mode 2) passes. `total`: the save memory's size (CARD_GetBackupTotalSize). The card's result code.
+u32 pxi7_backup(uintptr_t src, uintptr_t dst, u32 len, u32 op, u32 total) {
+    HOST_PROF(PROF_ARM7);
+    if (total) save_load(total);
+    return backup_op(op, src, dst, len);
 }
 
 // ---- touch panel (tag 6): request type in bits 8-14 (0 one sample, 1 start auto sampling, 2 stop, 3 stability);
@@ -329,9 +399,9 @@ static struct TouchScript sTouch[64];
 static int sTouchCount;
 
 int frontend_touch(int *x, int *y);
-// a screen position as the raw ADC sample, through the firmware's calibration points
+// a screen position as the raw ADC sample, through the calibration points the game reads too (TP_GetUserInfo)
 static u32 tp_raw(s32 sx, s32 sy) {
-    const u8 *u = sNvram + (sNvramSize ? (sNvram[0x20] | sNvram[0x21] << 8) * 8 : 0) + 0x58;
+    const u8 *u = gHostSysWork.nvramUserInfo + 0x58;
     s32 ax1 = u[0] | u[1] << 8, ay1 = u[2] | u[3] << 8, sx1 = u[4], sy1 = u[5];
     s32 ax2 = u[6] | u[7] << 8, ay2 = u[8] | u[9] << 8, sx2 = u[10], sy2 = u[11];
     s32 x = sx2 != sx1 ? ax1 + (sx - sx1) * (ax2 - ax1) / (sx2 - sx1) : 0;
@@ -341,10 +411,13 @@ static u32 tp_raw(s32 sx, s32 sy) {
 
 static void tp_sample(void) {
     u32 f = (u32)host_frame(), raw = 0;
-    int lx, ly;
-    if (frontend_touch(&lx, &ly)) raw = tp_raw(lx, ly);  // the viewer's mouse
-    for (int i = 0; i < sTouchCount; i++)                // ACWW_TOUCH
-        if (f >= sTouch[i].frame && f < sTouch[i].frame + sTouch[i].len) raw = tp_raw((s32)sTouch[i].x, (s32)sTouch[i].y);
+    int lx = 0, ly = 0, down = frontend_touch(&lx, &ly);  // the viewer's mouse
+    for (int i = 0; i < sTouchCount; i++)                 // ACWW_TOUCH
+        if (f >= sTouch[i].frame && f < sTouch[i].frame + sTouch[i].len) down = 1, lx = (int)sTouch[i].x, ly = (int)sTouch[i].y;
+#ifdef N3DS_DIRECT
+    opt_touch(&down, &lx, &ly);
+#endif
+    if (down) raw = tp_raw(lx, ly);
     ((volatile u16 *)gHostSysWork.touchPanel)[0] = (u16)raw;  // HW_TOUCHPANEL_BUF
     ((volatile u16 *)gHostSysWork.touchPanel)[1] = (u16)(raw >> 16);
 }
@@ -358,6 +431,23 @@ static void tp_command(u32 data) {
 }
 
 void pxi7_vblank(void) {
+#ifdef N3DS_DIRECT
+    // (in the background when the file is there whole; a write still going: at a later frame)
+    int writing = __atomic_load_n(&sWriting, __ATOMIC_ACQUIRE);
+    if (sDirtyLo < sDirtyHi && host_frame() >= sFlushAt && sSaveFile && !writing) {
+        fseek(sSaveFile, 0, SEEK_END);
+        u8 *p = ftell(sSaveFile) >= (long)sSaveSize ? realloc(sPending, sDirtyHi - sDirtyLo) : 0;
+        if (p) {
+            sPending = p, sPendingAt = sDirtyLo, sPendingLen = sDirtyHi - sDirtyLo;
+            memcpy(sPending, sSave + sPendingAt, sPendingLen);
+            sDirtyLo = ~0u, sDirtyHi = 0;
+            __atomic_store_n(&sWriting, 1, __ATOMIC_RELEASE);
+            if (!host_plat_thread_start(write_job, 0)) write_job(0);
+        }
+    }
+    if (!writing)
+#endif
+    if (sDirtyLo < sDirtyHi && host_frame() >= sFlushAt) pxi7_save_flush();
     if (sTpAuto && sCount == 0) { tp_sample(); pxi7_send(6 | (16u << 8) << 6); }
 }
 
@@ -448,7 +538,10 @@ static void service(u32 tag, u32 data, u32 err) {
     }
 }
 
-void pxi7_receive(u32 word) { service(word & 31, word >> 6, word >> 5 & 1); }
+void pxi7_receive(u32 word) {
+    HOST_PROF(PROF_ARM7);
+    service(word & 31, word >> 6, word >> 5 & 1);
+}
 
 void pxi7_init(void) {
     const char *t = getenv("ACWW_TOUCH");
@@ -477,6 +570,7 @@ void pxi7_init(void) {
     if (f) { sNvramSize = (u32)fread(sNvram, 1, sizeof sNvram, f); fclose(f); }
     else if (fw) fprintf(stderr, "pxi7: can't read the firmware image %s: a default one\n", fw);
     if (!sNvramSize) default_firmware();
+    user_settings();
     wm7_init(sSavePath);  // (the MAC address and the wireless channels in the user settings' copy)
     // ARM7 callbacks ready for every tag (OSSystemWork.pxiHandleChecker[1])
     ((volatile u32 *)gHostSysWork.pxiHandleChecker)[1] = 0xffffffff;

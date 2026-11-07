@@ -1,4 +1,5 @@
 #include "types.h"
+#include "n3ds_options.h"
 #include "host_labels.h"
 #include "field/MoneyRockState.h"
 #include "town/TownState.h"
@@ -643,6 +644,12 @@ extern "C" BOOL Item_Equals(u16 *a, u16 *b) {
 
 namespace nC {
 extern "C" s32 Item_GetPrice(u16 *p) {
+#ifdef N3DS_DIRECT
+    if (n3ds_fruit_count(*p) > 1) {  // (n3ds_options.h) a fruit stack: its fruit's price (Nook's local fruit rule) times n
+        u16 one = n3ds_fruit_one(*p);
+        return Item_GetPrice(&one) * n3ds_fruit_count(*p);
+    }
+#endif
     ItemId a(p);
     switch (Item_GetIdClass(&a.v)) {
     case 1:

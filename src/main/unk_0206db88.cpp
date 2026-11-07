@@ -4,6 +4,7 @@
 #include "types.h"
 #include "gfx/BgVramTask.h"
 #include "nitro/io_access.h"
+#include "n3ds_ui.h"
 #include "player/PlayerData.h"
 #include "proto/autoload_2/unk_020e8558.h"
 #include "proto/dtcm/unk_027e0434.h"
@@ -51,6 +52,11 @@ Slot16 sMenuScreenScroll;
 Slot8 sMenuScreenWipeFlags;
 Slot8 sMenuScreenBgKind;
 HBlankTask sMenuWipeHBlankTask;
+#ifdef N3DS_DIRECT  // (the host draws the wipe's zigzag, gpu2d_menu_wipe: no window changed every line, the V-blank's part kept)
+#define MENU_WIPE_HBLANK NULL
+#else
+#define MENU_WIPE_HBLANK MenuScreen_WipeHBlank
+#endif
 
 BOOL (*sMenuScreenSteps[])() = {
     MenuScreen_StepAct00, MenuScreen_StepAct01, MenuScreen_StepAct02, MenuScreen_StepAct03, MenuScreen_StepAct04,
@@ -84,6 +90,9 @@ extern "C" void MenuScreen_WipeInVBlank(void) {
         }
     }
     IO_W((volatile u16 *)0x4000042, ((sMenuWipeEdge[0] << 8) & 0xff00) | 0xff);
+#ifdef N3DS_DIRECT
+    gpu2d_menu_wipe(sMenuWipePos.v);
+#endif
 }
 
 extern "C" void MenuScreen_WipeOutVBlank(void) {
@@ -108,6 +117,9 @@ extern "C" void MenuScreen_WipeOutVBlank(void) {
             sMenuWipeEdge[i] = t;
         }
     }
+#ifdef N3DS_DIRECT
+    gpu2d_menu_wipe(sMenuWipePos.v);
+#endif
 }
 
 extern "C" void MenuScreen_StopWipe(void) {
@@ -120,7 +132,7 @@ extern "C" void MenuScreen_StopWipe(void) {
 extern "C" void MenuScreen_StartWipeIn(void) {
     s32 i;
     sMenuWipePos.v = 0x117;
-    if (HBlank_Add(&sMenuWipeHBlankTask, MenuScreen_WipeHBlank, MenuScreen_WipeInVBlank, 0)) {
+    if (HBlank_Add(&sMenuWipeHBlankTask, MENU_WIPE_HBLANK, MenuScreen_WipeInVBlank, 0)) {
         sMenuScreenWipeFlags.v |= 1;
     }
     for (i = 0; i < 24; i++) {
@@ -133,7 +145,7 @@ extern "C" void MenuScreen_StartWipeIn(void) {
 extern "C" void MenuScreen_StartWipeOut(void) {
     s32 i;
     sMenuWipePos.v = 0;
-    if (HBlank_Add(&sMenuWipeHBlankTask, MenuScreen_WipeHBlank, MenuScreen_WipeOutVBlank, 0)) {
+    if (HBlank_Add(&sMenuWipeHBlankTask, MENU_WIPE_HBLANK, MenuScreen_WipeOutVBlank, 0)) {
         sMenuScreenWipeFlags.v |= 1;
     }
     for (i = 0; i < 24; i++) {

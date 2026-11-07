@@ -29,6 +29,10 @@ typedef struct G3Vertex {
     s32 farPos[4], farColor[3];  // (an edge crossing both planes of an axis: the second crossing from there)
     u8 dbgClips;      // (diagnostics: the interpolations behind it; for the last one the inside and outside
     s32 dbgClip[8];   // colours, din, dout)
+#ifdef N3DS_DIRECT
+    s32 obj[3];       // the object coordinates and the list's id of their clip matrix (g3p_matrix): the picture can
+    u16 seg;          // be drawn again with other matrices (interpolation)
+#endif
 } G3Vertex;
 
 typedef struct G3Polygon {
@@ -60,14 +64,19 @@ typedef struct G3RenderState {
     u32 fogColor;
     u16 fogOffset;
     u8 fogTable[32];
+    int list;  // the direct build (N3DS_DIRECT): the GPU's vertex list of these polygons (g3p_swap); poly is empty
 } G3RenderState;
 
 extern G3RenderState gG3Render;
 extern const uint8_t *const *gG3Banks;  // VRAM banks A-I (gpu3d_frame)
 extern u8 gG3VramCnt[9];
+extern int gG3Diagnostics;  // (gpu3d_set_diagnostics: the comparisons' reports want more kept)
+extern u32 gG3VramGeneration;  // (gpu3d_vram_generation)
+extern u32 gG3Swaps;  // SWAP_BUFFERS done: gG3Render is set then
 
 // gpu3d_raster.c
 void g3_render(void);                    // gG3Render into the frame buffer
+void g3_render_wait(void);               // until the picture being drawn from gG3Render is done (the 3DS)
 const u32 *g3_frame_lines(void);
 int g3_raster_pixel_polygon(int x, int y);  // index into gG3Render.poly, -1 none
 void g3_raster_diagnostics(int on);
@@ -76,6 +85,28 @@ void g3_raster_diagnostics(int on);
 int g3w_init(void *device, void *queue, int scale);
 void g3w_render(const G3RenderState *r, const u8 *img, const u8 *pal, u32 *out);
 void *g3w_picture(void);
+
+// gpu3d_pica.c (the 3DS; elsewhere g3p_init fails): the polygons drawn by the 3DS's GPU into the rasteriser's
+// colour, depth and flag buffers (gpu3d_raster.c's formats; flags: bit 0 fog)
+int g3p_init(void);
+// (texChanged: the slots may have changed since the last frame; color NULL: drawn for the GPU's compositing into a
+// texture, g3p_picture, nothing read back)
+void g3p_render(const G3RenderState *r, const u8 *img, const u8 *pal, int texChanged, u32 *color, u32 *depth, u8 *flags);
+void *g3p_picture(void);  // the last picture drawn for the GPU's compositing (a C3D_Tex), NULL none
+void g3p_wait(void);  // until a picture being drawn (by the GPU thread) is done: before its list or textures change
+void g3_texture_rgba(u32 texparam, u32 texpal, u32 *out);  // (gpu3d_raster.c)
+// the direct build (N3DS_DIRECT): the geometry engine's polygons go straight into the GPU's
+// vertex list, in the DS screen's clip space (the viewport applied, not clipped: the GPU clips), while the list
+// before is drawn
+void g3p_viewport(const u32 vp[6]);  // VIEWPORT: x1, y1 (from the top), x2, y2, width, height (gpu3d_geom.c's sViewport)
+void g3p_polygon(G3Vertex *const *v, int n, u32 attr, u32 texparam, u32 texpal, int translucent, int wbuffer);
+int g3p_swap(void);  // the list filled since the last swap handed over (its number, G3RenderState.list), a new one begun
+#ifdef N3DS_DIRECT
+int g3p_matrix(const s32 clip[16]);  // a clip matrix (20.12) the list being filled uses: its id (G3Vertex.seg)
+void g3p_vertex(int seg, const s32 obj[3]);  // a vertex submitted under it (culled or not): what identifies it
+// each frame, before g3_render's drawing: whether a picture between the game's is due (the same list again)
+int g3p_between(const G3RenderState *r);
+#endif
 
 // feature census (gpu3d_geom.c)
 void g3_feature(int id);

@@ -108,6 +108,7 @@ extern const u8 kHudCameraGridCells[18];
 #include "proto/main/unk_02097444.h"
 #include "proto/main/unk_020b7190.h"
 #include "proto/main/unk_020b7d84.h"
+#include "n3ds_ui.h"
 
 
 
@@ -1934,10 +1935,22 @@ void HudController::update() {
 }
 
 void HudController::draw() {
+#ifdef N3DS_DIRECT  // (n3ds_ui.h: each panel to the wide screen's edges it is near; they draw into buffer A)
+    int n = Oam_Count(0);
+    clock.callDraw();
+    Oam_Anchor(0, n, N3DS_UI_NEAR(0)), n = Oam_Count(0);
+    countdown.callDraw();
+    Oam_Anchor(0, n, N3DS_UI_NEAR(1)), n = Oam_Count(0);
+    ((HudCameraButton *)(&cameraButton))->callDraw();
+    Oam_Anchor(0, n, N3DS_UI_NEAR(2)), n = Oam_Count(0);
+    wallet.callDraw();
+    Oam_Anchor(0, n, N3DS_UI_NEAR(3));
+#else
     clock.callDraw();
     countdown.callDraw();
     ((HudCameraButton *)(&cameraButton))->callDraw();
     wallet.callDraw();
+#endif
 }
 
 void HudController::enterOff() {
@@ -2131,10 +2144,21 @@ BOOL HudProc::onExecute() {
 }
 
 BOOL HudProc::onDraw() {
+#ifdef N3DS_DIRECT  // (n3ds_ui.h: each icon to the wide screen's edges it is near; Hud_Draw anchors its panels)
+    HudUnkSlideIcon_Draw();  // (not anchored: it slides sideways round the middle - not seen yet)
+    int n = Oam_Count(0);
+    HudLinkIcon_Draw();
+    Oam_Anchor(0, n, N3DS_UI_NEAR(5));
+    Hud_Draw();
+    n = Oam_Count(0);
+    HudUnkIcon_Draw();
+    Oam_Anchor(0, n, N3DS_UI_NEAR(6));
+#else
     HudUnkSlideIcon_Draw();
     HudLinkIcon_Draw();
     Hud_Draw();
     HudUnkIcon_Draw();
+#endif
     return TRUE;
 }
 

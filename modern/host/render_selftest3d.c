@@ -293,7 +293,7 @@ void render_selftest3d(long scenes) {
                 void gpu3d_debug_regs(FILE *f);
                 for (int i = 0; i < gpu3d_poly_count(); i++) {
                     Gpu3dVertexOut v[10];
-                    u32 a, t, p;
+                    uint32_t a, t, p;
                     int fl, k = gpu3d_poly_get(i, v, &a, &t, &p, &fl);
                     fprintf(f, "poly %08x %08x %04x %d %d", a, t, p, fl, k);
                     for (int j = 0; j < k; j++)

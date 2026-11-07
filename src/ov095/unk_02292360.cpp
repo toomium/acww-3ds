@@ -23,6 +23,9 @@
 #include "proto/ov002/unk_ov002_02200840.h"
 #include "proto/ov090/unk_ov090_022918e0.h"
 #include "proto/ov095/unk_02292360.h"
+#ifdef N3DS_DIRECT
+#include "n3ds_ui.h"
+#endif
 #include "gfx/BgVramTask.h"
 
 
@@ -225,6 +228,11 @@ BOOL Keyboard_IsMenuTabKey(Keyboard *s, s32 a)
     if (a >= 0xcd && a <= 0xd4) {
         return TRUE;
     }
+#ifdef N3DS_DIRECT
+    if (a == N3DS_KB_OPT_KEY) {
+        return TRUE;
+    }
+#endif
     return FALSE;
 }
 
@@ -727,6 +735,11 @@ s32 Keyboard_GetSpecialKeyCode(Keyboard *s, s32 a)
     if (a >= 0xc9 && a <= 0xe1) {
         return a + 0x3d;
     }
+#ifdef N3DS_DIRECT
+    if (a == N3DS_KB_OPT_KEY) {
+        return N3DS_KB_OPT_CODE;
+    }
+#endif
     return -1;
 }
 
@@ -1649,7 +1662,11 @@ s32 Keyboard_CalcChatKeyPos(Keyboard *s)
         return 1;
     }
     if (Keyboard_IsMenuTabKey(s, v) != 0) {
+#ifdef N3DS_DIRECT
+        s->cursorX = MenuTabBar_GetTabX(s->cursorKey == N3DS_KB_OPT_KEY ? N3DS_OPT_TAB : s->cursorKey - 0xcd);
+#else
         s->cursorX = MenuTabBar_GetTabX(s->cursorKey - 0xcd);
+#endif
         s->cursorY = 8;
         return 1;
     }
@@ -2514,6 +2531,21 @@ BOOL Keyboard_MoveOnChatKeys(Keyboard *s, u32 p)
         }
         return TRUE;
     }
+#ifdef N3DS_DIRECT
+    // the options button: Left from the pockets' tab key, Right back to it, Down as from it
+    if (s->cursorKey == N3DS_KB_OPT_KEY) {
+        if (MenuKeys_HasDown(p) != 0) {
+            Keyboard_SetFlags(s, 0x10);
+        } else if (MenuKeys_HasRight(p) != 0) {
+            s->cursorKey = 0xcd;
+        }
+        return TRUE;
+    }
+    if (s->cursorKey == 0xcd && MenuKeys_HasLeft(p) != 0 && MenuKeys_HasDown(p) == 0) {
+        s->cursorKey = N3DS_KB_OPT_KEY;
+        return TRUE;
+    }
+#endif
     if (Keyboard_IsMenuTabKey(s, s->cursorKey) != 0) {
         if (MenuKeys_HasDown(p) != 0) {
             if (s->cursorKey >= 0xd3) {

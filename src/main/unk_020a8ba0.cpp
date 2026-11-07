@@ -37,6 +37,7 @@
 #include "proto/main/unk_020a8ba0.h"
 #include "proto/main/unk_020b7190.h"
 #include "proto/main/unk_020b7d84.h"
+#include "n3ds_ui.h"
 
 
 extern "C" {
@@ -436,7 +437,13 @@ BOOL MsgUiProc::onExecute() {
 BOOL MsgUiProc::onDraw() {
     FieldInfoBalloon_Draw();
     TalkWindow_DrawAll();
+#ifdef N3DS_DIRECT  // (n3ds_ui.h: to the wide screen's edges it is near; mode 3: the screen that isn't on top)
+    int n = Oam_Count(3);
     InputModeIcon_Draw();
+    Oam_Anchor(3, n, N3DS_UI_NEAR(7));
+#else
+    InputModeIcon_Draw();
+#endif
     return TRUE;
 }
 

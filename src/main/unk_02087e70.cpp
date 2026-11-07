@@ -11,6 +11,7 @@
 #include "proto/itcm/unk_01ffcfc0.h"
 #include "proto/main/unk_02087e70.h"
 #include "proto/main/unk_02088b98.h"
+#include "n3ds_ui.h"
 
 
 
@@ -108,9 +109,19 @@ extern "C" BOOL BugNet_HitTest(void *a, void *b, s32 rad, u8 *out) {
     return result;
 }
 
+#ifdef N3DS_DIRECT
+// (n3ds_ui.h: each entry's UI anchor, 0 none; given to the host with the buffers)
+static u8 sOamAnchorA[0x80], sOamAnchorB[0x80];
+extern "C" void gpu2d_obj_anchors(int engine, const void *oam, const u8 *anchors);  // (modern/host/gpu2d)
+#endif
+
 extern "C" void Oam_LoadBuffers() {
     GX_LoadOAM(sOamBufferA, 0, 0x400);
     GXS_LoadOAM(sOamBufferB, 0, 0x400);
+#ifdef N3DS_DIRECT
+    gpu2d_obj_anchors(0, sOamBufferA, sOamAnchorA);
+    gpu2d_obj_anchors(1, sOamBufferB, sOamAnchorB);
+#endif
 }
 
 extern "C" void Oam_FlushBuffers() {
@@ -128,6 +139,9 @@ extern "C" void Oam_ResetBuffers() {
     sOamAffineCountA = 0;
     sOamCountB = 0;
     sOamAffineCountB = 0;
+#ifdef N3DS_DIRECT
+    for (int i = 0; i < 0x80; i++) sOamAnchorA[i] = sOamAnchorB[i] = 0;
+#endif
 }
 
 // obj: the object's OAM attributes (a GXOamAttr: attr0 / attr1, then attr2), drawn at x / y
@@ -562,3 +576,11 @@ s32 sOamCountA;
 s32 sOamAffineCountB;
 
 s32 sOamAffineCountA;
+
+#ifdef N3DS_DIRECT
+extern "C" int Oam_Count(int mode) { return Oam_UseBufferA(mode) ? sOamCountA : sOamCountB; }
+extern "C" void Oam_Anchor(int mode, int from, unsigned anchor) {
+    u8 *t = Oam_UseBufferA(mode) ? sOamAnchorA : sOamAnchorB;
+    for (int i = from < 0 ? 0 : from, n = Oam_Count(mode); i < n; i++) t[i] = (u8)anchor;
+}
+#endif

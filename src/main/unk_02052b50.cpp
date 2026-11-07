@@ -1,5 +1,6 @@
 #include "types.h"
 #include "sys/RecordFile.h"
+#include "n3ds_options.h"
 #include "game/InfoTableSet.h"
 #include "nitro/io_access.h"
 #include "proto/main/unk_02052b50.h"
@@ -116,6 +117,11 @@ extern "C" {
 
 void FtrInfoTables_Open(void *p)
 {
+#ifdef N3DS_DIRECT  // (the EUR records' size, n3ds_options.h)
+    ((InfoTableSet *)p)->open((void *)"/ftr_info/always.bin", 8, (void *)"/ftr_info/indoor.bin", 4, (void *)"/ftr_info/dma.bin",
+                              N3ds_LangEur() ? 0x20 : 0x1c, 0x800);
+    return;
+#endif
     ((InfoTableSet *)p)->open((void *)"/ftr_info/always.bin", 8, (void *)"/ftr_info/indoor.bin", 4, (void *)"/ftr_info/dma.bin", 0x1c, 0x800);
 }
 
@@ -495,9 +501,20 @@ s32 FtrInfo_GetIndoorFlagPair(s32 i) {
 u8 *FtrInfo_GetName(s32 i) {
     if (i >= 0x6e9) i = 0x6e8;
     FtrInfoRecord *r = (FtrInfoRecord *)gFtrInfo.getDma()->getRecord(i);
+#ifdef N3DS_DIRECT
+    if (r && N3ds_LangEur()) return &r->ftrName + 1;  // (the EUR record's form byte, n3ds_options.h)
+#endif
     if (r) return &r->ftrName;
     return 0;
 }
+
+#ifdef N3DS_DIRECT
+s32 N3ds_FtrNameForm(s32 i) {  // FtrInfo_GetNameForm with the EUR records' form byte (src/main/unk_02062530.cpp)
+    if (i >= 0x6e9) i = 0x6e8;
+    FtrInfoRecord *r = N3ds_LangEur() ? (FtrInfoRecord *)gFtrInfo.getDma()->getRecord(i) : 0;
+    return r ? (s8)(&r->ftrName)[0] : -1;
+}
+#endif
 
 BOOL FtrInfo_TestIndoorFlag6(s32 i) {
     if (i >= 0x6e9) i = 0x6e8;

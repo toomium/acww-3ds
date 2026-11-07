@@ -55,12 +55,13 @@ parser.add_argument("--cross", default=os.path.expanduser(
 parser.add_argument("--qemu", default=os.path.expanduser("~/acww/toolchains/qemu/usr/bin/qemu-aarch64"),
                     help="--arch aarch64: qemu-aarch64 (user mode) for running the tests (the game: ACWW_RUNNER, "
                          "tools/host_oracle.sh)")
-parser.add_argument("--os", choices=["linux", "windows", "macos"], default="macos" if sys.platform == "darwin" else "linux",
+parser.add_argument("--os", choices=["linux", "windows", "macos", "3ds"], default="macos" if sys.platform == "darwin" else "linux",
                     help="windows (with --arch x86_64): a cross build for x86-64 Windows with llvm-mingw (clang, UCRT, "
                          "libc++, lld; --mingw): build_host_win64.ninja, build/hostwin64_<v>/acww.exe, headless only "
                          "(no frontend yet), run with Wine here (ACWW_RUNNER; docs/host.md); macos (the default on a "
                          "Mac): a native build for the Mac's own architecture with Apple's clang, SDL2 from pkg-config "
-                         "(Homebrew): build_host64.ninja, build/host64_<v>")
+                         "(Homebrew): build_host64.ninja, build/host64_<v>; 3ds: the Nintendo 3DS with devkitPro's devkitARM and "
+                         "libctru ($DEVKITPRO, default /opt/devkitpro): build_host_3ds.ninja, build/host3ds_<v>/acww.3dsx")
 parser.add_argument("--mingw", default="",
                     help="the llvm-mingw directory for --os windows (default: the newest ~/acww/toolchains/llvm-mingw-*)")
 parser.add_argument("--extra-cflags", default="",
@@ -82,6 +83,9 @@ parser.add_argument("--sanitize", default="",
                          "the game's own heaps poisoned where unallocated, include/host_asan.h), bounds (array indexes "
                          "against the declared size, also arrays inside structs) and undefined (the rest of UBSan); "
                          "every report recovers (the run goes on), docs/host.md")
+parser.add_argument("--direct", action="store_true",
+                    help="--os 3ds: the enhanced port (a separate build: suffix _direct): "
+                         "N3DS_DIRECT defined, the hardware model replaced where it has been")
 parser.add_argument("--regen-gen", action="store_true",
                     help="regenerate modern/gen/gaps.c from the DS build's delinking (build/usa/delinks)")
 parser.add_argument("version", nargs="?", default="usa")
@@ -90,6 +94,19 @@ args = parser.parse_args()
 root = Path(__file__).resolve().parent.parent
 WIN = args.os == "windows"
 MAC = args.os == "macos"
+N3DS = args.os == "3ds"
+DKP = os.environ.get("DEVKITPRO", "/opt/devkitpro")
+if N3DS:
+    if args.guards or args.oracle or args.sanitize or args.cc != "gcc":
+        sys.exit("--os 3ds: no --guards, --oracle, --sanitize or --cc (devkitARM's GCC)")
+    DKA = os.environ.get("DEVKITARM", f"{DKP}/devkitARM")
+    if not os.path.exists(f"{DKA}/bin/arm-none-eabi-gcc") or not os.path.exists(f"{DKP}/libctru/lib/libctru.a"):
+        sys.exit(f"--os 3ds: no devkitARM and libctru in {DKP} (DEVKITPRO, DEVKITARM; `dkp-pacman -S 3ds-dev`)")
+    args.cc = f"{DKA}/bin/arm-none-eabi-gcc"
+    if args.direct and not args.suffix:
+        args.suffix = "_direct"
+elif args.direct:
+    sys.exit("--direct: --os 3ds only")
 if MAC:
     if args.guards or args.oracle:
         sys.exit("--os macos: no --guards or --oracle (GNU ld / melonDS builds)")
@@ -136,7 +153,7 @@ if SANITIZE:
         sys.exit("--sanitize and --guards don't combine")
     if not args.suffix:
         args.suffix = "_asan"
-X64 = args.arch == "x86_64"
+X64 = args.arch == "x86_64" and not N3DS
 HOST64 = X64 or A64  # a 64-bit build (the build directory's and the ninja file's names apart)
 CXX = "g++"
 if MAC:
@@ -149,6 +166,10 @@ elif A64:
     CXX = f"{args.cross}/bin/aarch64-none-linux-gnu-g++"
     build = Path("build") / f"hosta64{args.suffix}_{args.version}"
     NINJA_FILE = f"build_host_a64{args.suffix}.ninja"
+elif N3DS:
+    CXX = f"{DKA}/bin/arm-none-eabi-g++"
+    build = Path("build") / f"host3ds{args.suffix}_{args.version}"
+    NINJA_FILE = f"build_host_3ds{args.suffix}.ninja"
 elif WIN:
     # llvm-mingw's C++ compiler for the runtime's C++ units and the link (its libc++)
     CXX = f"{args.mingw}/bin/x86_64-w64-mingw32-clang++"
@@ -159,7 +180,9 @@ else:
     NINJA_FILE = f"build_host64{args.suffix}.ninja" if X64 else f"build_host{args.suffix}.ninja"
 R = args.sysroot
 G = f"{R}/usr/lib/gcc/x86_64-linux-gnu/15/32"
-M_FLAG = "" if MAC or A64 else "-m64" if X64 else "-m32"
+# (the 3DS: devkitPro's flags for its ARM11; -mword-relocations: what 3dsxtool can relocate)
+M_FLAG = "-march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations" if N3DS else \
+    "" if MAC or A64 else "-m64" if X64 else "-m32"
 # the compiler command; clang is told its target (llvm-mingw's clang is a cross compiler for Windows too; on Linux it
 # finds the system's GCC installation for the host runtime's headers and libraries)
 CC = f"{args.cc} --target={'x86_64' if X64 else 'i386'}-linux-gnu" if CLANG and not WIN and not MAC else args.cc
@@ -167,7 +190,7 @@ LD_EMU = "elf_x86_64" if X64 else "aarch64linux" if A64 else "elf_i386"
 
 # the 64-bit builds: position-independent executables (loaded anywhere, ASLR; docs/portability.md 3.3); i386, the
 # frozen reference, stays a fixed-address executable (its captures were taken so)
-PIE = "" if WIN else "-fPIE" if HOST64 else "-fno-pie"
+PIE = "" if WIN or N3DS else "-fPIE" if HOST64 else "-fno-pie"
 GAME_FLAGS = " ".join([
     *([M_FLAG] if M_FLAG else []), *([PIE] if PIE else []), "-fno-short-enums", "-fsigned-char", "-fshort-wchar", "-ffreestanding", "-nostdinc",
     "-fno-strict-aliasing", "-fno-builtin", "-O1", "-g", "-w", "-fno-omit-frame-pointer", "-falign-functions=4",
@@ -175,10 +198,13 @@ GAME_FLAGS = " ".join([
     # the game's C library names renamed to ds_* (its own libc, apart from the host's)
     "-include", "include/host_libc_rename.h",
 ])
+if N3DS:
+    # the game optimised further on the 3DS's slow CPU, without frame pointers (no backtraces there: plat_3ds.c)
+    GAME_FLAGS = GAME_FLAGS.replace(" -O1 ", " -O2 ").replace(" -fno-omit-frame-pointer ", " -fomit-frame-pointer ")
 if WIN:
     # GCC's bitfield layout, not Microsoft's: the save data's layout (its static_asserts) needs it
     GAME_FLAGS += " -mno-ms-bitfields"
-if not HOST64:
+if not HOST64 and not N3DS:
     # small structs returned in memory, as mwcc does: kept while the 32-bit build is the reference (its captures were
     # taken with it); the 64-bit builds use the platform ABI (clang supports the flag only on i386)
     GAME_FLAGS += " -fpcc-struct-return"
@@ -206,6 +232,8 @@ if MAC:
     CXX_FLAGS += " -Xclang -mconstructor-aliases"
 if args.extra_cflags:
     GAME_FLAGS += " " + args.extra_cflags
+if args.direct:
+    GAME_FLAGS += " -DN3DS_DIRECT"
 # the sanitizer variant: the game, the runtime and the link with the same -fsanitize options; HOST_ASAN tells the
 # runtime's stack switches (coro.c) and the game's heaps (include/host_asan.h) to annotate for ASan
 SAN_FLAGS = ""
@@ -251,7 +279,8 @@ def find_sdl2():
     return tree(os.path.expanduser("~/acww/toolchains/sdl2-dev"))
 SDL2_DIRS = find_sdl2() if (X64 or MAC) and not WIN else None
 SDL2 = bool(SDL2_DIRS)
-FRONTEND_FLAG = " -DHOST_FRONTEND_SDL=1" if SDL2 else " -DHOST_FRONTEND_NONE=1" if HOST64 else ""
+FRONTEND_FLAG = " -DHOST_FRONTEND_3DS=1" if N3DS else " -DHOST_FRONTEND_SDL=1" if SDL2 else \
+    " -DHOST_FRONTEND_NONE=1" if HOST64 else ""
 # (SDL_syswm.h, for the window's native handles: modern/host/x11shim stands in for the X11 headers)
 SDL_CFLAGS = " ".join(f"-I{d}" for d in SDL2_DIRS) + " -Imodern/host/x11shim" if SDL2 else ""
 SDL_LIBS = "-l:libSDL2-2.0.so.0" if SDL2 else ""
@@ -264,6 +293,20 @@ if MAC:
                   + SAN_FLAGS)
     LINK_FLAGS = SAN_FLAGS.replace(" -DHOST_ASAN", "")
     HOST_CXX_FLAGS = "-O1 -g -ffp-contract=off -std=c++17 -DHOST" + SAN_FLAGS
+    MELON_LIBS = ""
+elif N3DS:
+    # newlib and libctru (devkitPro); no POSIX signals for the debugging aids (debug_posix.c). The runtime shares
+    # structures with the game, so it takes the game's 32-bit enums too (arm-none-eabi's default is the smallest
+    # size), except the files that use libctru's structures (N3DS_NATIVE: the library's own default); the linker's
+    # notes about the mix are expected
+    # (-O2: the 3DS's CPU is slow, the runtime's loops are much of its time)
+    HOST_FLAGS = (f"{M_FLAG} -O3 -g -fomit-frame-pointer -Wall -std=gnu11 -DHOST -Iinclude -D__3DS__ "
+                  f"-I{DKP}/libctru/include -DHOST_DEBUG_POSIX=0 -fno-short-enums" + FRONTEND_FLAG)
+    LINK_FLAGS = f"{M_FLAG} -specs=3dsx.specs -L{DKP}/libctru/lib -Wl,--no-enum-size-warning,--no-wchar-size-warning"
+    HOST_CXX_FLAGS = f"{M_FLAG} -O1 -g -std=c++17 -DHOST"
+    if args.direct:
+        HOST_FLAGS += " -DN3DS_DIRECT"
+        HOST_CXX_FLAGS += " -DN3DS_DIRECT"
     MELON_LIBS = ""
 elif A64:
     # the cross toolchain's glibc; melonDS's core cross-built for aarch64 (build-core-a64: without the JIT and the GDB
@@ -329,6 +372,9 @@ if WGPU and MAC:
     WGPU_LIBS = (f" {shlex.quote(WGPU + '/lib/libwgpu_native.a')} -framework Metal -framework QuartzCore -framework CoreGraphics"
                  " -framework Foundation -framework IOKit -lobjc")
 
+# the 3DS runtime's files that use libctru's structures (built with its enum size: HOST_FLAGS)
+N3DS_NATIVE = ("plat_3ds.c", "frontend_3ds.c", "gpu3d_pica.c", "pica_display.c")
+
 MWCC_FLAG_MAP = {("-char", "unsigned"): "-funsigned-char"}
 
 
@@ -367,7 +413,7 @@ def main():
         n.rule("hostas_S", " ".join(x for x in (CC, M_FLAG, PIE) if x) + " -c $in -o $out", description="AS $in")
         n.rule("hostcxx", f"{CXX} {HOST_CXX_FLAGS} -MMD -MF $out.d -c $in -o $out", depfile="$out.d", deps="gcc",
                description="HOSTCXX $in")
-        libs = " -lws2_32" if WIN else f" {SDL_LIBS} -lc++ -lpthread -lm" if MAC else \
+        libs = " -lws2_32" if WIN else f" {SDL_LIBS} -lc++ -lpthread -lm" if MAC else " -lcitro3d -lctru -lm" if N3DS else \
             f" {SDL_LIBS} -lstdc++ -lpthread -lm -lc -lgcc"  # (ws2_32: wm7.c's sockets)
         n.rule("link", f"{CXX} {LINK_FLAGS} -o $out @$objects {MELON_LIBS}{WGPU_LIBS}{libs}", description="LINK $out")
         objs = []
@@ -383,6 +429,11 @@ def main():
                 continue
             if WIN and s.name in ("frontend_sdl.c", "frontend_ui.c", "frontend_viewer.c", "plat_posix.c"):
                 continue  # (debug_posix.c and guards.c are empty there: HOST_DEBUG_POSIX 0, no HOST_GUARDS)
+            if N3DS and s.name in ("frontend_sdl.c", "frontend_ui.c", "frontend_viewer.c", "plat_posix.c",
+                                   "plat_win32.c"):
+                continue
+            if not N3DS and s.name in ("plat_3ds.c", "frontend_3ds.c"):
+                continue
             if s.name in (("melon_none.c",) if args.oracle else ("melon.cpp", "melon_platform.cpp")):
                 continue  # (melonDS, or the stand-in that refuses it: --oracle)
             o = str(build / s.with_suffix(".o"))
@@ -396,11 +447,23 @@ def main():
                         variables={"name": "kShader2d"})
                 implicit = [wgsl_h]
             # the 2D and 3D renderers' per-pixel loops: optimised further than the rest of the runtime (-O1)
-            fl = SDL_CFLAGS if sdl else WGPU_CFLAGS + f" -I{build}/gen" if s.name == "wgpu_display.c" else \
+            fl = "-fshort-enums" if N3DS and s.name in N3DS_NATIVE else SDL_CFLAGS if sdl else WGPU_CFLAGS + f" -I{build}/gen" if s.name == "wgpu_display.c" else \
                 WGPU_CFLAGS if s.name == "gpu3d_wgpu.c" else \
+                "-O3" if N3DS and s.name == "gpu3d_geom.c" else \
                 "-O2" if "gpu2d" in s.parts or "gpu3d" in s.parts else None
             n.build(o, rule, str(s), variables={"flags": fl} if fl else None, implicit=implicit)
             objs.append(o)
+        if N3DS:
+            # the vertex shaders (gpu3d_pica.c, pica_display.c): assembled by picasso, embedded by bin2s (<name>_shbin,
+            # <name>_shbin_size)
+            n.rule("picasso", f"{DKP}/tools/bin/picasso -o $out $in", description="PICASSO $out")
+            n.rule("bin2s", f"{DKP}/tools/bin/bin2s -a 4 $in > $out", description="BIN2S $out")
+            for s in sources(Path("modern/host"), (".pica",)):
+                shbin = str(build / "gen" / s.name.replace(".v.pica", ".shbin"))
+                n.build(shbin, "picasso", str(s))
+                n.build(shbin + ".s", "bin2s", shbin)
+                n.build(shbin + ".o", "hostas_S", shbin + ".s")
+                objs.append(shbin + ".o")
         # The data between the decomp's units (gap objects of the DS build's delinking): generated once from that
         # build, which this branch no longer runs, and kept in modern/gen/. --regen-gen rebuilds it from
         # build/usa/delinks.
@@ -466,14 +529,26 @@ def main():
         # (the game's C library names don't clash with the host's: include/host_libc_rename.h)
         objects_file = build / "objects.txt"
         objects_file.write_text("".join(f"{Path(o).as_posix()}\n" for o in link_objs))
-        exe = str(build / ("acww.exe" if WIN else "acww"))
+        exe = str(build / ("acww.exe" if WIN else "acww.elf" if N3DS else "acww"))
         n.build(exe, "link", link_objs, implicit=[str(objects_file)], variables={"objects": str(objects_file)})
+        if N3DS:
+            # the homebrew launcher's program: the .3dsx with its title and icon (the .smdh), as $DEVKITARM/3ds_rules
+            smdh, tdsx = str(build / "acww.smdh"), str(build / "acww.3dsx")
+            n.rule("smdh", f'{DKP}/tools/bin/smdhtool --create "Animal Crossing WW" "Native port" '
+                           f'"acww-decomp" $in $out', description="SMDH $out")
+            n.build(smdh, "smdh", f"{DKP}/libctru/default_icon.png")
+            # (and the relocations checked: tools/host_3dsx_check.py)
+            n.rule("3dsx", f"{DKP}/tools/bin/3dsxtool $in $out --smdh=$smdh && python3 tools/host_3dsx_check.py $out "
+                           "|| (rm -f $out; exit 1)", description="3DSX $out")
+            n.build(tdsx, "3dsx", exe, implicit=[smdh, "tools/host_3dsx_check.py"], variables={"smdh": smdh})
         # the viewer: a 64-bit SDL2 program (SDL2's headers as for the frontend: <SDL2/SDL.h>, so their parent
         # directory; the system's libSDL2 at run time)
         vdirs = find_sdl2() or []
         vflags = " ".join(f"-I{os.path.dirname(d) if os.path.exists(d + '/SDL.h') else d}" for d in vdirs)
         n.rule("viewer", f"gcc -O2 {vflags} $in -o $out -l:libSDL2-2.0.so.0", description="VIEWER $out")
-        if WIN or MAC:
+        if N3DS:
+            n.default([str(build / "acww.3dsx")])
+        elif WIN or MAC:
             n.default([exe])
         elif A64:
             n.default([exe])
@@ -506,7 +581,7 @@ def main():
 def summary():
     """What the build has, and what to do about what it hasn't."""
     print(f"configure_host.py: {NINJA_FILE}: build with `ninja -f {NINJA_FILE}`, the game: {build}/"
-          f"{'acww.exe' if WIN else 'acww'}")
+          f"{'acww.exe' if WIN else 'acww.3dsx' if N3DS else 'acww'}")
     if (HOST64 or MAC) and not WIN:
         print("  window: " + ("SDL2" if SDL2 else
               "none, headless only - install SDL2's development files (e.g. libsdl2-dev) or give --sdl2"))

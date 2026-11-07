@@ -38,6 +38,9 @@
 #include "proto/ov090/unk_ov090_022918e0.h"
 #include "proto/ov095/unk_02292360.h"
 #include "proto/ov111/unk_02296840.h"
+#ifdef N3DS_DIRECT
+#include "n3ds_ui.h"
+#endif
 
 enum Unk_ov111_022970cc_Status { UNK_OV111_ST_0 = 0, UNK_OV111_ST_1 = 1, UNK_OV111_ST_2 = 2, UNK_OV111_ST_3 = 3 };
 
@@ -1152,6 +1155,12 @@ s32 ChatMenu::pressKeyCode(u32 x) {
             ChatMenu_RequestTab(this, x - 0x10a, 0);
             r = UNK_OV111_ST_2;
             break;
+#ifdef N3DS_DIRECT
+        case N3DS_KB_OPT_CODE - 0x100:  // (the options button: N3DS_KB_OPT_KEY)
+            ChatMenu_RequestTab(this, N3DS_OPT_TAB, 0);
+            r = UNK_OV111_ST_2;
+            break;
+#endif
         case 27:
         case 28:
         case 29:

@@ -2,7 +2,7 @@
 // by the viewer (modern/host/viewer/viewer.c, a 64-bit SDL program: the 32-bit game process can't load the system's
 // 64-bit SDL), which writes keys and the touch position back. Started here unless there is no display or it can't be
 // found. The 64-bit builds use frontend_sdl.c instead (HOST_FRONTEND_SDL), or frontend_none.c without SDL2.
-#if !HOST_FRONTEND_SDL && !HOST_FRONTEND_NONE
+#if !HOST_FRONTEND_SDL && !HOST_FRONTEND_NONE && !HOST_FRONTEND_3DS
 
 #define _GNU_SOURCE
 #include <fcntl.h>

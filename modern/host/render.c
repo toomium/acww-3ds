@@ -45,6 +45,8 @@
 #include "gpu2d/gpu2d.h"
 #include "gpu3d/gpu3d.h"
 #include "host_mem.h"
+#include "plat.h"
+#include "pica_display.h"
 #include "render.h"
 #include "wgpu_display.h"
 
@@ -55,14 +57,14 @@ void melon_write16(u32 addr, u16 v);
 void melon_write32(u32 addr, u32 v);
 u32 melon_read32(u32 addr);
 void melon_frame(void);
-const u32 *melon_screen(int screen);
+const uint32_t *melon_screen(int screen);
 int melon_gx_fifo_irq_level(void);
 void melon_debug(void);
-void melon_3d_lines(u32 *out);
+void melon_3d_lines(uint32_t *out);
 int melon_3d_poly_count(void);
-int melon_3d_poly_get(int i, Gpu3dVertexOut *v, u32 *attr, u32 *texparam, u32 *texpal, int *flags);
+int melon_3d_poly_get(int i, Gpu3dVertexOut *v, uint32_t *attr, uint32_t *texparam, uint32_t *texpal, int *flags);
 // hw.c
-void host_hblank(int line);
+int host_hblank(int line);
 // vram.c
 u8 *host_vram_bank(int i);
 void host_vram_flush(void);
@@ -74,6 +76,7 @@ static int sGpu3d;        // the own 3D engine runs (sOwn3d or sCompare)
 static int sMelon;        // melonDS runs
 static int sCompare;
 static int sGpuDisplay;   // the screens composited by the GPU (wgpu_display.c)
+static int sPica;         // the screens composited and shown by the 3DS's GPU (pica_display.c)
 static int sScale3d = 2;  // ACWW_SCALE3D
 static int sGpu2dMode;    // ACWW_GPU2D: 1 the 2D pictures drawn by the GPU, 2 checked against the CPU's
 static u64 sGpu2dChecked, sGpu2dDiffering;
@@ -86,7 +89,7 @@ static u64 sPolyFrames, sPolyDiffering, sFirstPolyDiffering = ~0ull;
 static long sPolyLines;
 static u64 sPix3dFrames, sPix3dDiffering, sFirstPix3dDiffering = ~0ull;
 static long sPix3dLines;
-static u32 s3d[256 * 192];
+static uint32_t s3d[256 * 192];
 
 static int env_is(const char *name, const char *value) {
     const char *r = getenv(name);
@@ -98,8 +101,9 @@ void render_init(void) {
     if (getenv("ACWW_RENDERER") && sOwn && !env_is("ACWW_RENDERER", "own"))
         fprintf(stderr, "render: ACWW_RENDERER=%s unknown (own, melon): own\n", getenv("ACWW_RENDERER"));
     sOwn3d = getenv("ACWW_RENDERER3D") ? !env_is("ACWW_RENDERER3D", "melon") : sOwn;
-    if (getenv("ACWW_RENDERER3D") && sOwn3d && !env_is("ACWW_RENDERER3D", "own") && !env_is("ACWW_RENDERER3D", "wgpu"))
-        fprintf(stderr, "render: ACWW_RENDERER3D=%s unknown (own, wgpu, melon): own\n", getenv("ACWW_RENDERER3D"));
+    if (getenv("ACWW_RENDERER3D") && sOwn3d && !env_is("ACWW_RENDERER3D", "own") && !env_is("ACWW_RENDERER3D", "wgpu") &&
+        !env_is("ACWW_RENDERER3D", "pica"))
+        fprintf(stderr, "render: ACWW_RENDERER3D=%s unknown (own, wgpu, pica, melon): own\n", getenv("ACWW_RENDERER3D"));
     if (sOwn3d) sOwn = 1;
     sCompare = getenv("ACWW_RENDER_COMPARE") ? atoi(getenv("ACWW_RENDER_COMPARE")) : 0;
     // the GPU by default (the own renderers, not compared with melonDS's)
@@ -117,6 +121,19 @@ void render_init(void) {
         if (sGpuDisplay && !env_is("ACWW_GPU2D", "0")) sGpu2dMode = env_is("ACWW_GPU2D_CHECK", "1") ? 2 : 1;
         if (sGpuDisplay && getenv("ACWW_GPU2D_SELFTEST")) sGpu2dMode = 2;
     }
+#ifdef __3DS__
+    // the 3DS: the polygons drawn by its GPU (gpu3d/gpu3d_pica.c), unless ACWW_RENDERER3D=own; the screens
+    // composited by it (pica_display.c), unless ACWW_COMPOSITE=cpu
+    int pica3d = sOwn3d && !env_is("ACWW_RENDERER3D", "own") && gpu3d_use_pica();
+    if (sOwn3d && !env_is("ACWW_RENDERER3D", "own") && !pica3d)
+        fprintf(stderr, "render: the 3DS GPU's renderer couldn't start: own\n");
+    if (sOwn && !sCompare && !env_is("ACWW_COMPOSITE", "cpu")) {
+        sPica = pdisp_init();
+        if (!sPica) fprintf(stderr, "render: the 3DS GPU's compositing couldn't start: the CPU's\n");
+        gpu3d_pica_direct(sPica);  // (its 3D pictures then straight from the GPU, not read back)
+        gpu3d_set_wide(sPica && pica3d && gpu3d_wide_wanted());  // (ACWW_WIDE: drawn only by these two)
+    }
+#endif
     if (getenv("ACWW_RENDER_COMPARE_MAX")) sCompareMax = strtol(getenv("ACWW_RENDER_COMPARE_MAX"), 0, 10);
     if (getenv("ACWW_RENDER_SELFTEST") || getenv("ACWW_RENDER_SELFTEST3D")) sCompare = sCompare ? sCompare : 1;
     sGpu2d = sOwn || sCompare;
@@ -253,11 +270,25 @@ static void compare_state(u32 addr, u32 v) {
 void render_write32(u32 addr, u32 v) {
     if (sMelon) melon_write32(addr, v);
     if (sGpu2d && (addr < 0x04000400 || addr > 0x04000600)) gpu2d_write32(addr, v);  // (not the 3D command ports)
-    if (sGpu3d && is_3d(addr)) gpu3d_write32(addr, v);
+    if (sGpu3d && is_3d(addr)) {
+        HOST_PROF(PROF_GEOM);
+        gpu3d_write32(addr, v);
+    }
     if (sCompare > 1 && !sSelftest && addr >= 0x04000400 && addr <= 0x04000600) compare_state(addr, v);
 }
 
+void render_write32_n(u32 addr, const u32 *v, u32 n) {
+    // (as render_write32 for a 3D command port: not the 2D renderer's; melonDS and the comparisons word by word)
+    if (sMelon || sCompare > 1 || !sGpu3d || !is_3d(addr) || addr < 0x04000400 || addr >= 0x04000600) {
+        for (u32 i = 0; i < n; i++) render_write32(addr, v[i]);
+        return;
+    }
+    HOST_PROF(PROF_GEOM);
+    gpu3d_write32_n(addr, (const uint32_t *)v, n);  // (u32 is unsigned int; uint32_t on the 3DS unsigned long)
+}
+
 u32 render_read32(u32 addr) {
+    HOST_PROF(PROF_GEOM);
     if (!sOwn3d) {
         u32 m = melon_read32(addr);
         if (sCompare) {
@@ -303,7 +334,7 @@ int render_compare(const char *kind, u64 label) {
     sCompared++;
     int differs = 0;
     for (int s = 0; s < 2; s++) {
-        const u32 *m = melon_screen(s), *o = gpu2d_screen(s);
+        const uint32_t *m = melon_screen(s), *o = gpu2d_screen(s);
         int first = -1, count = 0;
         for (int i = 0; i < 256 * 192; i++)
             if ((m[i] ^ o[i]) & 0xffffff) { if (first < 0) first = i; count++; }
@@ -343,7 +374,7 @@ static void census_polygons(u64 label) {
     int n = nm < no ? nm : no;
     for (int i = 0; i < n; i++) {
         Gpu3dVertexOut vm[10], vo[10];
-        u32 am, ao, tm, to, pm, po;
+        uint32_t am, ao, tm, to, pm, po;
         int fm, fo;
         memset(vm, 0, sizeof vm);
         memset(vo, 0, sizeof vo);
@@ -399,7 +430,7 @@ static int compare_polygons(const char *kind, u64 label) {
         int nm = melon_3d_poly_count(), no = gpu3d_poly_count();
         for (int i = 0; i < (nm > no ? nm : no); i++) {
             Gpu3dVertexOut v[10];
-            u32 a, t, p;
+            uint32_t a, t, p;
             int f;
             for (int w = 0; w < 2; w++) {
                 memset(v, 0, sizeof v);
@@ -415,7 +446,7 @@ static int compare_polygons(const char *kind, u64 label) {
     int nm = melon_3d_poly_count(), no = gpu3d_poly_count();
     int n = nm < no ? nm : no, bad = -1;
     Gpu3dVertexOut vm[10], vo[10];
-    u32 am = 0, ao = 0, tm = 0, to = 0, pm = 0, po = 0;
+    uint32_t am = 0, ao = 0, tm = 0, to = 0, pm = 0, po = 0;
     int fm = 0, fo = 0, km = 0, ko = 0;
     for (int i = 0; i < n && bad < 0; i++) {
         memset(vm, 0, sizeof vm);
@@ -449,7 +480,7 @@ static int compare_polygons(const char *kind, u64 label) {
 static int compare_3d(const char *kind, u64 label) {
     sPix3dFrames++;
     melon_3d_lines(s3d);
-    const u32 *o = gpu3d_lines();
+    const uint32_t *o = gpu3d_lines();
     int first = -1, count = 0;
     for (int i = 0; i < 256 * 192; i++)
         if ((o[i] ^ s3d[i]) & 0x1f3f3f3f) { if (first < 0) first = i; count++; }
@@ -483,7 +514,7 @@ static int compare_3d(const char *kind, u64 label) {
             if (f) {
                 for (int i = 0; i < gpu3d_poly_count(); i++) {
                     Gpu3dVertexOut v[10];
-                    u32 a, t, p;
+                    uint32_t a, t, p;
                     int fl, k = gpu3d_poly_get(i, v, &a, &t, &p, &fl);
                     fprintf(f, "poly %08x %08x %04x %d %d", a, t, p, fl, k);
                     for (int j = 0; j < k; j++)
@@ -518,18 +549,20 @@ int render_compare_3d(const char *kind, u64 label) {
 static void gpu3d_run_frame(void) {
     const u8 *banks[9];
     for (int i = 0; i < 9; i++) banks[i] = host_vram_bank(i);
+    u32 host_vram_generation(void);
+    gpu3d_vram_generation(host_vram_generation());
     gpu3d_frame(banks);
 }
 
 // ACWW_GPU2D_CHECK: the GPU's 2D pictures against the CPU's, word for word
 int render_check_gpu2d(void) {
-    static u32 gpu[256 * 384 * 2];
+    static uint32_t gpu[256 * 384 * 2];
     static long reported;
     if (!wdisp_read_2d(gpu)) return 1;
     sGpu2dChecked++;
     int count = 0, first = -1;
     for (int s = 0; s < 2; s++) {
-        const u32 *cpu = gpu2d_deferred(s);
+        const uint32_t *cpu = gpu2d_deferred(s);
         for (int i = 0; i < 256 * 192 * 2; i++)
             if (cpu[i] != gpu[s * 256 * 192 * 2 + i]) {
                 if (first < 0) first = s * 256 * 192 * 2 + i;
@@ -540,7 +573,7 @@ int render_check_gpu2d(void) {
     sGpu2dDiffering++;
     if (reported++ < sCompareMax) {
         int px = first / 2, s = px / (256 * 192), y = px / 256 % 192, x = px % 256, w = first & 1;
-        const u32 *cpu = gpu2d_deferred(s) + (y * 256 + x) * 2;
+        const uint32_t *cpu = gpu2d_deferred(s) + (y * 256 + x) * 2;
         char what[256];
         gpu2d_describe_pixel(s, x, y, what, sizeof what);
         fprintf(stderr, "gpu2d-check: frame %llu: %d words differ, first %s screen (%d, %d) word %d: cpu %08x %08x gpu "
@@ -550,19 +583,68 @@ int render_check_gpu2d(void) {
     return 1;
 }
 
-static void render_hblank(int line, void *context) {
-    (void)context;
-    host_hblank(line);
+// ACWW_FPS: also the renderers' share of the time, every 120 frames (the 2D one with the game's H-blank work)
+static u64 sTime2d, sTime3d, sTimeComp;
+static void render_timing(u64 t0, u64 t1, u64 t2, u64 t3) {
+    static int on = -1;
+    if (on < 0) on = getenv("ACWW_FPS") != 0;
+    if (!on) return;
+    sTime2d += t1 - t0, sTime3d += t2 - t1, sTimeComp += t3 - t2;
+    if (host_frame() % 120 == 0) {
+        fprintf(stderr, "render: frame %llu: 2D %.1f ms, 3D %.1f ms, compositing %.1f ms a frame\n",
+                (unsigned long long)host_frame(), (double)sTime2d / 120e6, (double)sTime3d / 120e6,
+                (double)sTimeComp / 120e6);
+        sTime2d = sTime3d = sTimeComp = 0;
+    }
 }
+
+static int render_hblank(int line, void *context) {
+    (void)context;
+    HOST_PROF(PROF_GAME);  // (the game's H-blank work)
+    return host_hblank(line);
+}
+// ACWW_FRAMESKIP=<n>: the screens drawn every n + 1 frames (the 3DS's default: 1, every other one; elsewhere and in
+// the enhanced port, N3DS_DIRECT, 0).
+// The game runs every frame as before - its H-blank work line by line, the geometry engine - only the pictures are
+// skipped; the 3D one is drawn in the frame before the screens' (the 2D renderer shows the last frame's 3D picture)
+static int frameskip(void) {
+    static int n = -1;
+    if (n < 0) {
+#if defined(__3DS__) && !defined(N3DS_DIRECT)
+        n = 1;
+#else
+        n = 0;
+#endif
+        if (getenv("ACWW_FRAMESKIP")) n = atoi(getenv("ACWW_FRAMESKIP"));
+        if (n < 0) n = 0;
+    }
+    return n;
+}
+
 void render_frame(void) {
+    u64 every = (u64)frameskip() + 1;
+    int draw2d = host_frame() % every == 0, raster3d = (host_frame() + 1) % every == 0;
+    if (!draw2d && !sCompare && !sGpuDisplay) {
+        if (sOwn)
+            for (int line = 0; line < 192; line++) render_hblank(line, 0);
+        HOST_PROF(raster3d ? PROF_3D : PROF_GEOM);
+        if (sGpu3d) gpu3d_set_raster(raster3d), gpu3d_run_frame();
+        return;
+    }
+    // (a 3D picture drawn now would be shown by the next frame drawn, but the frame before that draws a newer one;
+    // the comparisons and the PC's GPU display draw every frame)
+    gpu3d_set_raster(sCompare || sGpuDisplay ? 1 : raster3d);
     // the 3D picture this frame shows (melonDS renders the next one in the frame)
-    const u32 *lines3d = s3d;
+    const uint32_t *lines3d = s3d;
     if (sGpu2d) {
         if (sGpuDisplay) lines3d = NULL;  // (the GPU's: gpu3d_wgpu_picture)
         else if (sOwn3d) lines3d = gpu3d_lines();
         else melon_3d_lines(s3d);
     }
     if (sMelon) melon_frame();
+    HOST_PROF(PROF_2D);
+    if (sPica) pdisp_wait(PDISP_COMP, 1);  // (the 2D renderer records into the record that compositing drew)
+    u64 t0 = host_plat_time_ns();
     if (sGpu2d || sGpu3d) host_vram_flush();
     if (sGpu2d) {
         Gpu2dFrameInput in;
@@ -576,29 +658,41 @@ void render_frame(void) {
         in.hblankContext = 0;
         in.defer3d = sGpuDisplay;
         in.gpu = sGpu2dMode;
+        in.layers = sPica ? pdisp_layers() : NULL;
+        in.deferLayers = sPica;  // (drawn by the GPU thread: pica_display.c)
         gpu2d_render_frame(&in);
         if (sGpuDisplay) {
-            const u32 *deferred[2] = {gpu2d_deferred(0), gpu2d_deferred(1)};
-            const u32 *lines[2] = {gpu2d_deferred_lines(0), gpu2d_deferred_lines(1)};
+            const uint32_t *deferred[2] = {gpu2d_deferred(0), gpu2d_deferred(1)};
+            const uint32_t *lines[2] = {gpu2d_deferred_lines(0), gpu2d_deferred_lines(1)};
             if (sGpu2dMode) wdisp_frame_2d(gpu2d_gpu_frame(), in.bank, lines, gpu3d_wgpu_picture(), sScale3d);
             else wdisp_frame(deferred, lines, gpu3d_wgpu_picture(), sScale3d);
             if (sGpu2dMode == 2 && !sSelftest) render_check_gpu2d();
         }
     }
+    u64 t1 = host_plat_time_ns();
+    gHostProf = PROF_3D;
+    void *texture3d = sPica && sOwn3d ? gpu3d_pica_picture() : NULL;  // (the last frame's, as lines3d)
     if (sGpu3d) gpu3d_run_frame();
+    u64 t2 = host_plat_time_ns();
+    gHostProf = PROF_COMP;
+    if (sPica) pdisp_frame(texture3d, sOwn3d ? lines3d : NULL);  // (the 3D picture the 2D renderer would have shown)
+    render_timing(t0, t1, t2, host_plat_time_ns());
     if (sCompare && !sSelftest) {
         render_compare("frame", host_frame());
         render_compare_3d("frame", host_frame());
     }
 }
 
-const u32 *render_screen(int screen) {
+const uint32_t *render_screen(int screen) {
     if (sGpuDisplay) return wdisp_screens() + 256 * 192 * (screen & 1);
+    if (sPica) return pdisp_screen(screen);
     return sOwn ? gpu2d_screen(screen) : melon_screen(screen);
 }
 int render_on_gpu(void) { return sGpuDisplay; }
+int render_presenting(void) { return wdisp_presenting() || sPica; }
 
 void render_exit_report(void) {
+    if (sPica) pdisp_idle();  // (the GPU thread's last job done before the program ends)
     if (sCompare) {
         fprintf(stderr, "render-compare: %llu frames compared, %llu differ", (unsigned long long)sCompared,
                 (unsigned long long)sDiffering);

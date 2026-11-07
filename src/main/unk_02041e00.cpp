@@ -2,6 +2,7 @@
 #include "host_labels.h"
 #include "uptr.h"
 #include "types.h"
+#include "n3ds_options.h"
 #include "sys/StackPad.h"
 #include "sys/ClockDateTime.h"
 #include "gfx/VecFx32.h"
@@ -7713,7 +7714,11 @@ extern "C" s32 FieldAction_Add(FieldActionRequest *e, u32 a1, s32 type, Vec2 *po
                     if (Inventory_GetEmptyLetter() == 0) {
                         type++;
                     }
+#ifdef N3DS_DIRECT
+                } else if (Pocket_FindEmpty() < 0 && Pocket_FindFruitStack(&a6) == -1) {  // (or onto a fruit stack)
+#else
                 } else if (Pocket_FindEmpty() < 0) {
+#endif
                     type++;
                 }
             }

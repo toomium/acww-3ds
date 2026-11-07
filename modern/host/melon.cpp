@@ -117,7 +117,7 @@ extern "C" void melon_frame(void) {
 // the 3D picture the coming frame shows (melonDS renders the next one during the frame, at line 215): 192 lines of
 // 256 pixels, 6-bit red, green, blue in bits 0-5, 8-13, 16-21, alpha 0-31 in bits 24-28, before BG0HOFS's scroll -
 // the own 2D renderer's BG0 (render.c)
-extern "C" void melon_3d_lines(u32 *out) {
+extern "C" void melon_3d_lines(uint32_t *out) {
     if (!sNds) { memset(out, 0, 256 * 192 * 4); return; }
     GPU3D &g = sNds->GPU.GPU3D;
     if (g.AbortFrame) { memset(out, 0, 256 * 192 * 4); return; }
@@ -153,7 +153,7 @@ extern "C" int melon_3d_buffers(u32 *depth, u32 *attr) {
 // melonDS's polygon list of the frame it rendered last, for comparing the own geometry engine with it (render.c):
 // the count, and polygon i's vertices (screen position, depth, colour, texture coordinates) and attributes
 extern "C" int melon_3d_poly_count(void) { return (int)sNds->GPU.GPU3D.RenderNumPolygons; }
-extern "C" int melon_3d_poly_get(int i, Gpu3dVertexOut *v, u32 *attr, u32 *texparam, u32 *texpal, int *flags) {
+extern "C" int melon_3d_poly_get(int i, Gpu3dVertexOut *v, uint32_t *attr, uint32_t *texparam, uint32_t *texpal, int *flags) {
     GPU3D &g = sNds->GPU.GPU3D;
     if (i < 0 || (u32)i >= g.RenderNumPolygons) return 0;
     const melonDS::Polygon *p = g.RenderPolygonRAM[i];
@@ -205,7 +205,7 @@ extern "C" void melon_3d_state(Gpu3dState *s) {
 }
 
 // screen 0 top, 1 bottom: 256x192 pixels, 0x00RRGGBB
-extern "C" const u32 *melon_screen(int screen) {
+extern "C" const uint32_t *melon_screen(int screen) {
     return sNds->GPU.Framebuffer[sNds->GPU.FrontBuffer][screen].get();
 }
 

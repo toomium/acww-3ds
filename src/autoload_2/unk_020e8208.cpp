@@ -3,6 +3,9 @@
 // mwcc 1.2/base, C++, ARM, -O4,p. Owns .rodata 0x02135914-0x02135934 and autoload_3 .bss 0x021f47d0-0x021f47e0.
 #include "types.h"
 #include "host_mem.h"
+#ifdef HOST
+#include "host_input.h"
+#endif
 #include "sys/TreeNode.h"
 #include "gfx/VecFx32.h"
 #include "sys/ListNode.h"
@@ -104,6 +107,9 @@ extern "C" void Pad_Update(void) {
     sPadPrevHeld = keys;
     gPad.cur = keys;
     gPad.dir = kPadDirAngleTable[(keys & 0xf0) >> 4];
+#ifdef HOST
+    if (gHostStickTilt) gPad.dir = gHostStickAngle;  // (the 3DS's circle pad: any angle, include/host_input.h)
+#endif
 }
 
 // ---- file-scope objects (defined after their users)

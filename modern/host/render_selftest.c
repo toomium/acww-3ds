@@ -18,7 +18,7 @@
 #include "render.h"
 
 void host_vram_control(u32 addr, u8 value);  // vram.c
-const u32 *melon_screen(int screen);         // melon.cpp
+const uint32_t *melon_screen(int screen);         // melon.cpp
 
 static u32 sRng = 0x2545f491, sMask = 0xff;
 static u32 sObjMask = 0xff, sObjCount = 128;
@@ -126,7 +126,7 @@ static void write_shots(const char *prefix, long n) {
         if (!f) return;
         fprintf(f, "P6\n256 384\n255\n");
         for (int s = 0; s < 2; s++) {
-            const u32 *px = r ? melon_screen(s) : gpu2d_screen(s);
+            const uint32_t *px = r ? melon_screen(s) : gpu2d_screen(s);
             for (int i = 0; i < 256 * 192; i++) {
                 u8 rgb[3] = {(u8)(px[i] >> 16), (u8)(px[i] >> 8), (u8)px[i]};
                 fwrite(rgb, 1, 3, f);

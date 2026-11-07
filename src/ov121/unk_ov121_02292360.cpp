@@ -15,6 +15,12 @@
 #include "net/CommManager.h"
 #include "nitro/gxoam.h"
 #include "menu/MenuTabBar.h"
+#ifdef N3DS_DIRECT
+#include "n3ds_ui.h"
+// the options button as a hand target in the tab row, left of the pockets' tab (0x18 is "none"): a tab target whose tab
+// is N3DS_OPT_TAB
+#define DESIGN_OPT_SLOT 0x19
+#endif
 #include "player/PlayerData.h"
 #include "save/Pattern.h"
 #include "save/PatternOrder.h"
@@ -949,11 +955,17 @@ void DesignTab::openMessageWindow(u32 a, u32 b) {
 
 s32 DesignTab::getSlotX(u32 i) {
     if (i >= 0x10 && i <= 0x17) return MenuTabBar_GetTabX(i - 0x10);
+#ifdef N3DS_DIRECT
+    if (i == DESIGN_OPT_SLOT) return MenuTabBar_GetTabX(N3DS_OPT_TAB);
+#endif
     return sDesignTabSlotX[i];
 }
 
 u32 DesignTab::getSlotY(u32 i) {
     if (i >= 0x10 && i <= 0x17) return 8;
+#ifdef N3DS_DIRECT
+    if (i == DESIGN_OPT_SLOT) return 8;
+#endif
     return sDesignTabSlotY[i];
 }
 
@@ -1589,6 +1601,11 @@ s32 DesignTab::getCursorTab() {
     if (t >= 0x10 && t <= 0x17) {
         return t - 0x10;
     }
+#ifdef N3DS_DIRECT
+    if (t == DESIGN_OPT_SLOT) {
+        return N3DS_OPT_TAB;
+    }
+#endif
     return -1;
 }
 
@@ -1605,6 +1622,11 @@ BOOL DesignTab::moveCursorHorizontal(u32 pad, u32 f) {
             if (t > 0x10 && t <= 0x17) {
                 cursorSlot = *(volatile u8 *)&cursorSlot - 1;
             }
+#ifdef N3DS_DIRECT
+            else if (t == 0x10) {
+                cursorSlot = DESIGN_OPT_SLOT;  // (from the pockets' tab onto the options button)
+            }
+#endif
         }
     } else if (MenuKeys_HasRight(pad)) {
         if (cursorSlot == 8) {
@@ -1621,6 +1643,11 @@ BOOL DesignTab::moveCursorHorizontal(u32 pad, u32 f) {
             if (t >= 0x10 && t < 0x17) {
                 cursorSlot = *(volatile u8 *)&cursorSlot + 1;
             }
+#ifdef N3DS_DIRECT
+            else if (t == DESIGN_OPT_SLOT) {
+                cursorSlot = 0x10;  // (back onto the pockets' tab)
+            }
+#endif
         }
     }
     return testFlags(0x60);
@@ -1667,6 +1694,9 @@ void DesignTab::moveCursorVertical(u32 pad, u32 f) {
         if (!cursorRowDown(0, 3, 4)) {
             s32 t = getCursorTab();
             if (t != -1) {
+#ifdef N3DS_DIRECT
+                if (t == N3DS_OPT_TAB) t = 0;  // (down from the options button as from the pockets' tab)
+#endif
                 moveCursorFromTab(t);
             } else if (!cursorRowDown(0xc, 0xf, 0)) {
                 u32 b = cursorSlot;

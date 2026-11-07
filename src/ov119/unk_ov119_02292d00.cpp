@@ -86,6 +86,15 @@ class FriendRosterTab;
 typedef void (FriendRosterTab::*Unk_ov119_02295840_Fn)();
 
 #define A0V (*(volatile u8 *)&focus)
+#ifdef N3DS_DIRECT
+#include "n3ds_ui.h"
+// the options button as a focus in the tab row, left of the pockets' tab (0x17 is "none"): a tab focus whose tab is
+// N3DS_OPT_TAB
+#define FRIEND_OPT_FOCUS 0x18
+#define FRIEND_IS_TAB(v) (((v) >= 0xe && (v) <= 0x15) || (v) == FRIEND_OPT_FOCUS)
+#else
+#define FRIEND_IS_TAB(v) ((v) >= 0xe && (v) <= 0x15)
+#endif
 #define E9V (*(volatile u8 *)&labelCount)
 #define B1V (*(volatile u8 *)&delayTimer)
 
@@ -854,7 +863,7 @@ void FriendRosterTab::showCursor() {
     u32 v = A0V;
     if (v <= 7) {
         U970_B->setAnimIfChanged(7);
-    } else if (v >= 0xe && v <= 0x15) {
+    } else if (FRIEND_IS_TAB(v)) {
         U970_B->setAnimIfChanged(0xd);
     } else {
         U970_B->setAnimIfChanged(1);
@@ -870,6 +879,11 @@ s32 FriendRosterTab::getFocusX() {
     if (v >= 0xe && v <= 0x15) {
         return MenuTabBar_GetTabX(v - 0xe);
     }
+#ifdef N3DS_DIRECT
+    if (v == FRIEND_OPT_FOCUS) {
+        return MenuTabBar_GetTabX(N3DS_OPT_TAB);
+    }
+#endif
     if (v >= 8 && v <= 0xd) {
         return 0xd6;
     }
@@ -884,7 +898,7 @@ s32 FriendRosterTab::getFocusY() {
     if (v <= 7) {
         return v * 16 + 0x38;
     }
-    if (v >= 0xe && v <= 0x15) {
+    if (FRIEND_IS_TAB(v)) {
         return 8;
     }
     if (v >= 8 && v <= 0xd) {
@@ -905,7 +919,7 @@ void FriendRosterTab::moveCursorToTarget() {
     u32 v = A0V;
     if (v <= 7) {
         U970_B->switchToAnim07();
-    } else if (v >= 0xe && v <= 0x15) {
+    } else if (FRIEND_IS_TAB(v)) {
         U970_B->switchToAnim0D();
     } else {
         U970_B->switchToAnim01();
@@ -990,12 +1004,25 @@ BOOL FriendRosterTab::moveFocus(u32 keys) {
                 A0V = t + 8;
             }
         }
-    } else if (old >= 0xe && old <= 0x15) {
+    } else if (FRIEND_IS_TAB(old)) {
         if (MenuKeys_HasLeft(keys)) {
             if (A0V > 0xe) {
+#ifdef N3DS_DIRECT
+                if (A0V != FRIEND_OPT_FOCUS)  // (the options button: nothing further left)
+#endif
                 A0V = A0V - 1;
             }
+#ifdef N3DS_DIRECT
+            else {
+                A0V = FRIEND_OPT_FOCUS;  // (from the pockets' tab onto the options button)
+            }
+#endif
         } else if (MenuKeys_HasRight(keys)) {
+#ifdef N3DS_DIRECT
+            if (A0V == FRIEND_OPT_FOCUS) {
+                A0V = 0xe;  // (back onto the pockets' tab)
+            } else
+#endif
             if (A0V < 0x15) {
                 A0V = A0V + 1;
             }
@@ -1179,6 +1206,11 @@ void FriendRosterTab::showFriend(s32 x)
 BOOL FriendRosterTab::activateFocus()
 {
     u32 m = focus;
+#ifdef N3DS_DIRECT
+    if (m == FRIEND_OPT_FOCUS) {
+        return requestTab(N3DS_OPT_TAB) ? TRUE : FALSE;
+    }
+#endif
     if (m >= 0xe && m <= 0x15) {
         if (requestTab(m - 0xe)) {
             return TRUE;

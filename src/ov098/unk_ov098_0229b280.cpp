@@ -1,4 +1,5 @@
 #include "types.h"
+#include "n3ds_options.h"
 #include "host_labels.h"
 #include "host_shared_calls.h"
 #include "Unk_020d8c7c.h"
@@ -314,6 +315,9 @@ void PocketMenu::actionBuryItem() {
         s32 pair[2];
         pair[0] = digUnitX;
         pair[1] = digUnitY;
+#ifdef N3DS_DIRECT
+        a = n3ds_fruit_one(a);  // of a fruit stack one fruit is buried (mainAct2E)
+#endif
         fieldRequest = FieldAction_RequestTool(gCommManager->myAid, pair, 2, 0, a);
         if (fieldRequest == -1) {
             PocketMenu_ReturnToIdle(this);
@@ -344,7 +348,15 @@ void PocketMenu::mainAct2E() {
     VecFx32 out;
     FieldPos_FromUnitCenter(&out, digUnitX, digUnitY);
     v = PocketMenu_GetItem(this, actionTarget);
+#ifdef N3DS_DIRECT
+    v = n3ds_fruit_one(v);  // a fruit stack (n3ds_options.h): one fruit goes into the hole, the rest stays
+#endif
     if (PlayerActor_LocalRequestBuryItem(&out, &v)) {
+#ifdef N3DS_DIRECT
+        if (n3ds_fruit_count(PocketMenu_GetItem(this, actionTarget)) > 1)
+            PocketMenu_SetSlotItem(this, actionTarget, n3ds_fruit_rest(PocketMenu_GetItem(this, actionTarget)), 0);
+        else
+#endif
         PocketMenu_ClearSlotItem(this, actionTarget);
         setMainState(0x2f);
     }
