@@ -1,104 +1,115 @@
-# Animal Crossing: Wild World, native
+# Animal Crossing: Wild World for the Nintendo 3DS
 
-Animal Crossing: Wild World (Nintendo DS) as a native PC program. The game's code comes from a complete
-decompilation and is compiled for the PC, with its own 2D and 3D renderers (on the GPU through WebGPU, or on the
-CPU), sound, input and a window. It doesn't use an emulator. You need your own copy of the game.
+Animal Crossing: Wild World (Nintendo DS) as a native Nintendo 3DS program. The game's code comes from a complete
+decompilation and is compiled for the 3DS's ARM11, with the DS's hardware rebuilt on the 3DS's own: the 3D on its
+GPU, the sound on its DSP, the save and the ROM on the SD card. It doesn't use an emulator, and it does what a DS
+can't: wide screens, 60 frames a second and an options page in the game's own menu. You need your own copy of the
+game.
 
-![K.K. Slider playing at The Roost, seen from behind the player's chair](docs/images/roost.png)
+<p align="center">
+  <img src="docs/images/3ds-title.png" width="32%" alt="The title screen: the logo above, the town and Touch to Start below">
+  <img src="docs/images/3ds-town.png" width="32%" alt="Walking through the town among cherry trees in spring">
+  <img src="docs/images/3ds-menu.png" width="32%" alt="The pause menu's pockets below, the town across the whole wide top screen">
+</p>
 
-Supported version:
+## Features
 
-| Version        | Game code | SHA-1                                      |
-| -------------- | --------- | ------------------------------------------ |
-| USA (Rev 1)    | `ADME`    | `77fde3e30e1e6068395d1f96ea63be569b61c351` |
+- **Wide screens.** The town is drawn across the 3DS's full 400 × 240 top and 320 × 240 bottom screens instead of the
+  DS's 256 × 192, and the game's interface moves to the screens' edges.
+- **60 fps.** The game draws a 3D picture every third frame; the port draws the pictures in between.
+- **Native.** The decompiled game runs as ARM code, and the 3D goes straight to the 3DS's GPU (PICA200).
+- **Options page.** A new tab in the pause menu, left of the pockets: L from the pockets, or touch its button.
+  Settings are saved to `acww.cfg`.
+- **Stacked fruit** (off by default). Up to 9 of a fruit in one pocket slot.
+- **Other languages.** English, French, German, Italian or Spanish text, taken from your copy of the European
+  version.
 
-## Run it
+<p align="center">
+  <img src="docs/images/3ds-options.png" width="40%" alt="The options page: 60 fps, wide screen, stacked fruit">
+  <img src="docs/images/3ds-house.png" width="40%" alt="The player's house on the first morning">
+</p>
 
-Linux on x86-64 and macOS (Apple silicon or Intel). On Linux you need GCC, Python 3, Ninja and SDL2's development
-files; on Debian or Ubuntu:
+## Install
+
+You need a 3DS that runs homebrew (the Homebrew Launcher) and your own dump of the game:
+
+| Version     | Game code | SHA-1                                      |
+| ----------- | --------- | ------------------------------------------ |
+| USA (Rev 1) | `ADME`    | `77fde3e30e1e6068395d1f96ea63be569b61c351` |
+
+1. Download `acww.3dsx` from the [Releases](../../releases) page (or build it, below).
+2. Copy `acww.3dsx` and your ROM, renamed to `game.nds`, to `sd:/3ds/acww/`.
+3. Start it from the Homebrew Launcher.
+
+The game saves to `sd:/3ds/acww/game.sav`, and the program's log goes to `log.txt` in the same folder.
+
+### Controls
+
+The 3DS's buttons are the DS's; the Circle Pad works as the D-pad, and the touch screen as the DS's.
+
+### Options
+
+The options page writes `sd:/3ds/acww/acww.cfg`, a file of `NAME=value` lines that can also be edited by hand:
+
+| Option                    | Default | Meaning                                                                    |
+| ------------------------- | ------- | -------------------------------------------------------------------------- |
+| `ACWW_PICA_INTERP`        | `1`     | 60 fps: the pictures between the game's                                    |
+| `ACWW_WIDE`               | `1`     | the wide screens (after a restart)                                         |
+| `ACWW_STACK_FRUIT`        | `0`     | stacked fruit                                                              |
+| `ACWW_LANG`               |         | `ENG`, `FRN`, `GER`, `ITA` or `SPN`: that language's text...               |
+| `ACWW_LANG_ROM`           |         | ...from the European ROM (`ADMP`) at this path, e.g. `sdmc:/3ds/acww/eur.nds` |
+
+Stacked fruit uses item codes the DS game doesn't have: a save with stacks in it belongs to this port.
+
+## Build
+
+With [devkitPro](https://devkitpro.org/wiki/Getting_Started)'s 3DS tools (`3ds-dev`, in `/opt/devkitpro`), Python 3
+and Ninja:
 
 ```
-sudo apt install build-essential python3 ninja-build libsdl2-dev
+python3 tools/configure_host.py --os 3ds --direct
+ninja -f build_host_3ds_direct.ninja          # build/host3ds_direct_usa/acww.3dsx
 ```
 
-On macOS, Apple's command line tools (`xcode-select --install`) and, from Homebrew, `brew install ninja sdl2
-pkg-config`. The steps below are the same; the GPU renderer draws through Metal there.
+Without `--direct`, the build keeps the PC port's model of the DS hardware instead of the 3DS's own (no wide screens,
+no options page): `build_host_3ds.ninja`, `build/host3ds_usa/acww.3dsx`.
 
-Then:
+## On the PC
+
+The same game code also runs as a PC program (Linux and macOS), with its own 2D and 3D renderers
+on the GPU through WebGPU or on the CPU:
 
 ```
 python3 tools/host_fetch_wgpu.py   # optional: the GPU renderer (downloads wgpu-native)
-python3 tools/configure_host.py    # says what the build will have
+python3 tools/configure_host.py
 ninja -f build_host64.ninja
 build/host64_usa/acww path/to/your/game.nds
 ```
 
-The game saves next to the ROM (`game.sav` for `game.nds`). Without `host_fetch_wgpu.py`, or on a machine without
-a GPU that WebGPU can use, the game is drawn by the CPU renderers instead.
+[`docs/host.md`](docs/host.md) describes the runtime, the PC build's controls and options, and how changes are checked.
 
-### Controls
-
-| DS | Keyboard | Controller |
-|---|---|---|
-| D-pad | arrow keys | D-pad or left stick |
-| A / B / X / Y | X / Z / S / A | the face buttons by position, as on the DS |
-| L / R | Q / W | shoulder buttons or triggers |
-| Start / Select | Enter / Right Shift | Start / Back |
-| touch screen | the mouse (left button) on the bottom screen, or a finger | |
-
-The keyboard keys are by position, so they are the same on other layouts. **F1** (or Back + Start on a controller)
-opens a screen for changing every binding; it stays hidden until then, and the game pauses while it is open. F11
-changes the window size, Alt+Enter switches to full screen and M mutes the sound.
-
-### Options
-
-Set as environment variables:
-- `ACWW_RENDERER3D=own`: the CPU renderers even when there is a GPU (default: the GPU, `wgpu`).
-- `ACWW_SCALE3D=<n>`: the 3D scenes at n times the DS's resolution (default 2).
-- `ACWW_MSAA=1`: no smoothing of the 3D edges.
-- `ACWW_VSYNC=1`: wait for the display's refresh.
-- `ACWW_SAVE=<file>`: another save file.
-- `ACWW_FIRMWARE=<file>`: a DS firmware image for the user settings (by default a built-in one).
-
-[`docs/host.md`](docs/host.md) has the rest, including the test and comparison options.
-
-### Playing together
-
-The gate's DS-to-DS play works between copies of the program, each with its own save file: one player talks to Copper
-and opens the gate ("Invite guests!"), the other asks Copper to go out by DS to DS and picks the town. Copies on the
-same machine or the same LAN find each other by themselves (UDP ports 31470-31477: a firewall has to let them
-through). A second copy on the same machine needs a save file of its own: `ACWW_SAVE=second.sav`. Over the internet,
-the visitor names the host:
-
-```
-ACWW_NET_PEER=<the host's address> build/host64_usa/acww path/to/your/game.nds
-```
-
-The host's UDP port 31470 has to be reachable (forwarded on its router). Both players need the same build (64-bit or
-32-bit). Nintendo Wi-Fi Connection is not supported.
+<p align="center">
+  <img src="docs/images/roost.png" width="40%" alt="K.K. Slider playing at The Roost, on the PC">
+</p>
 
 ## What's here
 
-- `src/`, `include/`: the game's code, decompiled to C and C++. On this branch it is changed freely toward plain,
-  portable code, so it no longer rebuilds the original ROM.
-- `modern/host/`: the PC runtime:
-  - the DS's hardware services (interrupts, timers, DMA, the ARM7's side: sound, touch, the clock, save memory);
-  - the 2D renderer (`gpu2d/`) and 3D engine (`gpu3d/`), also as GPU shaders (`gpu2d.wgsl`, `gpu3d/gpu3d_wgpu.c`);
-  - the SDL frontend.
-- [`docs/host.md`](docs/host.md): how the native build works, its options and how changes are checked.
-- [`docs/portability.md`](docs/portability.md): the port's plan and log (Windows, macOS, the GPU renderers).
+- `src/`, `include/`: the game's code, decompiled to C and C++, changed toward plain, portable code (it no longer
+  rebuilds the original ROM). The 3DS port's changes to it are under `#ifdef N3DS_DIRECT`.
+- `modern/host/`: the runtime: the DS's hardware services, the 2D and 3D renderers, the frontends (SDL on the PC,
+  `frontend_3ds.c`, `pica_display.c` and `gpu3d/gpu3d_pica.c` on the 3DS).
+- `modern/ds/`: the runtime's game-side parts: the overlays, the second ROM for the languages.
+- `tools/configure_host.py`: every build's setup.
 
-Other builds: 32-bit x86 (`--arch i386`), 64-bit ARM Linux (`--arch aarch64`, cross-compiled) and Windows
-(`--os windows`, cross-compiled with llvm-mingw; no window yet). [`docs/host.md`](docs/host.md) has their setup.
+## Credits
 
-## The matching decompilation
-
-The decompilation itself, which rebuilds the original ROM byte for byte with the original compiler, is at the
-`matching` tag. Its README covers the setup, the compiler and how functions were matched; this tree keeps its
-notes in [`docs/matching.md`](docs/matching.md), [`docs/layout.md`](docs/layout.md) and
-[`docs/unmatched.md`](docs/unmatched.md).
+This builds on [acww-decomp](https://github.com/7ucina/acww-decomp) by Lucina and its contributors: the decompilation
+and the PC port this 3DS port started from. The matching decompilation, which rebuilds the original ROM byte for
+byte, is at the `matching` tag ([`docs/matching.md`](docs/matching.md)). The 3DS side uses devkitPro's libctru and
+citro3d, and was tested in the Azahar emulator and on a New Nintendo 3DS.
 
 ## Licence
 
-The project's own work (sources, tools, documentation) is under the MIT licence, see [`LICENSE`](LICENSE). The
-game and its ROM belong to Nintendo and are not included; you need your own dump.
+The project's own work (sources, tools, documentation) is under the MIT licence, see [`LICENSE`](LICENSE). The game
+and its ROM belong to Nintendo and are not included; you need your own dump. This project is not affiliated with
+Nintendo.
