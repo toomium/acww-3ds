@@ -16,13 +16,19 @@ game.
 
 - **Wide screens.** The town is drawn across the 3DS's full 400 × 240 top and 320 × 240 bottom screens instead of the
   DS's 256 × 192, and the game's interface moves to the screens' edges.
-- **60 fps.** The game draws a 3D picture every third frame; the port draws the pictures in between.
+- **60 fps as the target.** The game draws a 3D picture every third frame; the port draws the pictures in between.
+  60 fps is not reached everywhere yet.
+- **Analog Circle Pad.** The player walks in any direction, not only the D-pad's eight, and as fast as the Circle
+  Pad is tilted.
 - **Native.** The decompiled game runs as ARM code, and the 3D goes straight to the 3DS's GPU (PICA200).
 - **Options page.** A new tab in the pause menu, left of the pockets: L from the pockets, or touch its button.
   Settings are saved to `acww.cfg`.
 - **Stacked fruit** (off by default). Up to 9 of a fruit in one pocket slot.
 - **Other languages.** English, French, German, Italian or Spanish text, taken from your copy of the European
-  version.
+  version. Only German has been tested so far.
+
+So far the port has only been tested on a New Nintendo 3DS (and in the Azahar emulator); how it runs on an original
+3DS or 2DS is unknown.
 
 <p align="center">
   <img src="docs/images/3ds-options.png" width="40%" alt="The options page: 60 fps, wide screen, stacked fruit">
@@ -45,7 +51,8 @@ The game saves to `sd:/3ds/acww/game.sav`, and the program's log goes to `log.tx
 
 ### Controls
 
-The 3DS's buttons are the DS's; the Circle Pad works as the D-pad, and the touch screen as the DS's.
+The 3DS's buttons are the DS's, and the touch screen is the DS's. The Circle Pad walks with any angle and speed
+(`ACWW_ANALOG=0`: as the D-pad).
 
 ### Options
 
@@ -56,6 +63,7 @@ The options page writes `sd:/3ds/acww/acww.cfg`, a file of `NAME=value` lines th
 | `ACWW_PICA_INTERP`        | `1`     | 60 fps: the pictures between the game's                                    |
 | `ACWW_WIDE`               | `1`     | the wide screens (after a restart)                                         |
 | `ACWW_STACK_FRUIT`        | `0`     | stacked fruit                                                              |
+| `ACWW_ANALOG`             | `1`     | the Circle Pad's angle and tilt (`0`: the D-pad's eight directions)        |
 | `ACWW_LANG`               |         | `ENG`, `FRN`, `GER`, `ITA` or `SPN`: that language's text...               |
 | `ACWW_LANG_ROM`           |         | ...from the European ROM (`ADMP`) at this path, e.g. `sdmc:/3ds/acww/eur.nds` |
 
@@ -106,7 +114,7 @@ build/host64_usa/acww path/to/your/game.nds
 This builds on [acww-decomp](https://github.com/7ucina/acww-decomp) by Lucina and its contributors: the decompilation
 and the PC port this 3DS port started from. The matching decompilation, which rebuilds the original ROM byte for
 byte, is at the `matching` tag ([`docs/matching.md`](docs/matching.md)). The 3DS side uses devkitPro's libctru and
-citro3d, and was tested in the Azahar emulator and on a New Nintendo 3DS.
+citro3d.
 
 ## Licence
 
