@@ -197,6 +197,9 @@ GAME_FLAGS = " ".join([
     "-DMODERN", "-DHOST", f"-DGAME_VERSION_{args.version.upper()}", "-Iinclude",
     # the game's C library names renamed to ds_* (its own libc, apart from the host's)
     "-include", "include/host_libc_rename.h",
+    # local variables without an initializer start as 0 instead of garbage left on the stack
+    # (caused a crash on the 3DS in function "runChosenTopic")
+    "-ftrivial-auto-var-init=zero",
 ])
 if N3DS:
     # the game optimised further on the 3DS's slow CPU, without frame pointers (no backtraces there: plat_3ds.c)
