@@ -5167,7 +5167,9 @@ decltype(&VillagerTalkRequestReplyTopics::runChosenTopic) data_020d7980 = &Villa
 
 void VillagerTalkRequestReplyTopics::runChosenTopic(TalkTopicMsg *, u32 idx) {
     u8 b;
-    TalkTopicMsg out;
+    // some "selectFn" like "openDeliveryItemPicker" do not write "out", so initialize it here properly
+    // otherwise the check "out.fileName != 0" is undefined behaviour
+    TalkTopicMsg out = {};
     if (choiceValues[idx] != NULL) {
         ((VillagerTalk *)this)->setTopicFns((VillagerTalkTopicFns *)choiceValues[idx]);
     } else {
