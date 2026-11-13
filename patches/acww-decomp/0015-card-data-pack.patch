@@ -1,0 +1,44 @@
+From: acww-3ds <noreply@invalid>
+Subject: [PATCH] Card: a data pack (game.pak) in place of the ROM image
+
+card_init shows the game the card header a data pack carries (card_pak.h, the port's file); a ROM image is read
+as before. The save file beside game.pak is game.sav, as beside game.nds.
+---
+ modern/host/card.c | 3 +++
+ modern/host/pxi7.c | 2 +-
+ 2 files changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/modern/host/card.c b/modern/host/card.c
+index 3ea7141..90a8c18 100644
+--- a/modern/host/card.c
++++ b/modern/host/card.c
+@@ -78,6 +78,8 @@ static u8 rom_byte(u32 a) {
+     return sBlock[sLast][a & (BLOCK - 1)];
+ }
+ 
++#include "card_pak.h"
++
+ void card_init(const char *path) {
+     sRomPath = path;
+     sRom = fopen(path, "rb");
+@@ -96,6 +98,7 @@ void card_init(const char *path) {
+     }
+     fprintf(stderr, "card: the ROM image %s\n", sImage ? "held in memory" : "through a 1 MB cache");
+     for (u32 i = 0; i < sizeof sHeader; i++) sHeader[i] = rom_byte(i);
++    pak_header(sHeader);  // (card_pak.h: a data pack's header for the game)
+ #ifdef N3DS_PORT
+     if (sImage && !host_plat_thread_start(preload, 0)) fprintf(stderr, "card: no thread to read the image ahead\n");
+ #endif
+diff --git a/modern/host/pxi7.c b/modern/host/pxi7.c
+index 64fdd08..c9fef79 100644
+--- a/modern/host/pxi7.c
++++ b/modern/host/pxi7.c
+@@ -557,7 +557,7 @@ void pxi7_init(void) {
+         static char path[1024];
+         const char *rom = host_rom_path();
+         size_t n = rom ? strlen(rom) : 0;
+-        if (n > 4 && !strcmp(rom + n - 4, ".nds")) n -= 4;
++        if (n > 4 && (!strcmp(rom + n - 4, ".nds") || !strcmp(rom + n - 4, ".pak"))) n -= 4;
+         if (rom && n + 5 < sizeof path) {
+             snprintf(path, sizeof path, "%.*s.sav", (int)n, rom);
+             sSavePath = path;

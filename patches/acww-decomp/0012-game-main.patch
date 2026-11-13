@@ -1,0 +1,824 @@
+From: acww-3ds export <noreply@invalid>
+Subject: [PATCH] The game's main program (src/main)
+
+Changes 18 files of the decompilation for the 3DS port (area: game-main).
+Made by tools/export_from_fork.py; do not edit by hand.
+
+diff --git a/src/main/unk_02004558_extra.cpp b/src/main/unk_02004558_extra.cpp
+index f943ada3..f4550dbf 100644
+--- a/src/main/unk_02004558_extra.cpp
++++ b/src/main/unk_02004558_extra.cpp
+@@ -2,6 +2,9 @@
+ // The 14 functions of the translation unit 0x02004558-0x0201106c that only mwcc 1.2/base compiles
+ // to the original code (see unk_02004558.cpp; same declarations, nothing else is defined here).
+ #include "types.h"
++#ifdef HOST
++#include "host_input.h"
++#endif
+ #include "proto/main/unk_020b4828.h"
+ #include "gfx/VecFx32.h"
+ #include "net/CommManager.h"
+@@ -921,6 +924,10 @@ void PlayerActor::readInput() {
+                     this->inputMagnitude = 0x1000;
+                 } else {
+                     this->inputMagnitude = 0xc32;
++#ifdef HOST
++                    // (the 3DS's circle pad: walking as fast as it is tilted, as the stylus's distance does)
++                    if (gHostStickTilt) this->inputMagnitude = gHostStickTilt < 0x400 ? 0x30c : gHostStickTilt * 0xc32 >> 12;
++#endif
+                 }
+                 this->inputAngle = gPad.dir;
+             } else {
+diff --git a/src/main/unk_020119cc.cpp b/src/main/unk_020119cc.cpp
+index 17f7780a..40099092 100644
+--- a/src/main/unk_020119cc.cpp
++++ b/src/main/unk_020119cc.cpp
+@@ -4693,10 +4693,7 @@ void NpcAnimCtrl::playAnimKeepFrame(NpcActor *scene, u32 c, u32 d, u32 e) {
+ 
+ BOOL NpcAnimCtrl::isAnimFinished(NpcActor *scene) {
+     using namespace nH;
+-    // BUG, kept for now (the reference captures have it): this reads the start of model (its CachedModel part) as
+-    // the AnimFrameCtrl; the DS tests the AnimFrameCtrl base of model (NpcActor + 0x188, model + 0x9c), i.e.
+-    // static_cast<AnimFrameCtrl &>(scene->model).isFinished(), which changes the NPC animations (Kapp'n in the taxi).
+-    if (((AnimFrameCtrl *)(void *)&scene->model)->isFinished() != 0) {
++    if (static_cast<AnimFrameCtrl &>(scene->model).isFinished() != 0) {
+         return TRUE;
+     }
+     return FALSE;
+diff --git a/src/main/unk_0201c050.cpp b/src/main/unk_0201c050.cpp
+index b0ad00b9..361e58f1 100644
+--- a/src/main/unk_0201c050.cpp
++++ b/src/main/unk_0201c050.cpp
+@@ -4,6 +4,7 @@
+ #include "town/TownBlockCell.h"
+ // mwcc-flags: -str reuse
+ #include "types.h"
++#include "n3ds_options.h"
+ #include "sys/ClockDateTime.h"
+ #include "gfx/VecFx32.h"
+ #include "item/PocketMatches.h"
+@@ -5166,7 +5167,9 @@ decltype(&VillagerTalkRequestReplyTopics::runChosenTopic) data_020d7980 = &Villa
+ 
+ void VillagerTalkRequestReplyTopics::runChosenTopic(TalkTopicMsg *, u32 idx) {
+     u8 b;
+-    TalkTopicMsg out;
++    // some "selectFn" like "openDeliveryItemPicker" do not write "out", so initialize it here properly
++    // otherwise the check "out.fileName != 0" is undefined behaviour
++    TalkTopicMsg out = {};
+     if (choiceValues[idx] != NULL) {
+         ((VillagerTalk *)this)->setTopicFns((VillagerTalkTopicFns *)choiceValues[idx]);
+     } else {
+@@ -5565,6 +5568,10 @@ void VillagerTalkTopics::onDeliveryItemPicked() {
+         case 10:
+             itemFromPlayer = *((PlayerInventory *)(r7))->getPocket(r6);
+             c.item = 0xfff1;
++#ifdef N3DS_PORT
++            c.item = n3ds_fruit_rest(itemFromPlayer);  // of a fruit stack one fruit is given, the rest stays
++            itemFromPlayer = n3ds_fruit_one(itemFromPlayer);
++#endif
+             ((PlayerInventory *)(r7))->setPocket((u16 *)(&c.item), r6, 0);
+             break;
+         case 19:
+diff --git a/src/main/unk_02039c08.cpp b/src/main/unk_02039c08.cpp
+index 41489752..5e9c1065 100644
+--- a/src/main/unk_02039c08.cpp
++++ b/src/main/unk_02039c08.cpp
+@@ -13,6 +13,9 @@ s32 func_01ffcb0c(s32 a, s32 b);
+ s32 FX_Div(s32 a, s32 b);
+ void VEC_CrossProduct(void *dst, void *a, void *b);
+ void VEC_Normalize(void *dst, void *src);
++#ifdef N3DS_PORT
++int gpu3d_wide_wanted(void);  // (modern/host/gpu3d/gpu3d_geom.c: ACWW_WIDE)
++#endif
+ }
+ 
+ extern s16 data_02135f44[];
+@@ -30,6 +33,16 @@ void ViewFrustum::calcPlanes() {
+     s32 s = FX_Div(data_02135f44[idx * 2], data_02135f44[idx * 2 + 1]);
+     s32 y = func_01ffcb0c(nearClip, s);
+     s32 x = func_01ffcb0c(aspect, y);
++#ifdef N3DS_PORT
++    // The wide view: the side planes through the wide 3D picture's edges, 400 x 240 around the DS's 256 x 192
++    // (gpu3d.h GPU3D_WIDE_X / Y), so that what is drawn there is there (and its actors run: Actor::preExecute)
++    static int wide = -1;
++    if (wide < 0) wide = gpu3d_wide_wanted();
++    if (wide) {
++        x = x * (128 + 72) / 128;
++        y = y * (96 + 24) / 96;
++    }
++#endif
+     v[0] = -x;
+     v[1] = -y;
+     v[2] = -nearClip;
+diff --git a/src/main/unk_020411dc.cpp b/src/main/unk_020411dc.cpp
+index a1d21e9a..5e3b5f06 100644
+--- a/src/main/unk_020411dc.cpp
++++ b/src/main/unk_020411dc.cpp
+@@ -38,6 +38,13 @@ u16 sIrisWipeTableB[0x60];
+ 
+ extern BgmManager *data_021c1b3c;
+ 
++#ifdef N3DS_PORT
++// The enhanced port draws the iris itself, over the whole wide screens: the progress
++// given at V-blank for the next frame (0 open, 0x1000 closed; -1 none). Window 0 changed every line is left out: it
++// made the 2D a piece a line (slow) and left the margins black.
++extern "C" void gpu2d_iris(int progress);  // (modern/host/gpu2d)
++#endif
++
+ extern "C" {
+ void MIi_CpuClear16(u16 v, void *dst, u32 size);
+ s32 FX_Div(s32, s32);
+@@ -125,6 +132,12 @@ extern "C" void IrisWipe_SetupLayers() {
+     Unk_02041104_Fill(0x1111, G2S_GetBG2CharPtr(), 0x20);
+     Unk_02041104_Fill(0x8000, (void *)(HW_PLTT + 0x400), 4);  // the sub screen's
+     Gfx2d_ShowSubPlanes(4);
++#ifdef N3DS_PORT  // (no window; the black BG2 hidden, as inside the window)
++    Gfx2d_DisableMainWindows(1);
++    Gfx2d_DisableSubWindows(1);
++    Gfx2d_HideMainPlanes(4);
++    Gfx2d_HideSubPlanes(4);
++#endif
+ }
+ 
+ extern "C" void IrisWipe_Begin() {
+@@ -134,13 +147,18 @@ extern "C" void IrisWipe_Begin() {
+     MIi_CpuClear16(z, sIrisWipeTableB, sizeof sIrisWipeTableB);
+     sIrisWipeActiveTable = sIrisWipeTableA;
+     IrisWipe_SetupLayers();
++#ifndef N3DS_PORT
+     if (HBlank_Add(&sIrisWipeHBlankTask, IrisWipe_HBlank, IrisWipe_VBlankRegs, NULL) != 0) {
+         sIrisWipeFlags |= 1;
+     }
++#endif
+     if (gScreenTransition.progress == 0x1000) Gfx2d_SetBrightness(0);
+ }
+ 
+ extern "C" void IrisWipe_End() {
++#ifdef N3DS_PORT
++    gpu2d_iris(-1);
++#endif
+     Gfx2d_DisableMainWindows(1);
+     Gfx2d_DisableSubWindows(1);
+     if (sIrisWipeFlags & 1) {
+@@ -187,6 +205,9 @@ extern "C" void IrisWipe_Update() {
+ }
+ 
+ extern "C" void IrisWipe_SwapTables() {
++#ifdef N3DS_PORT
++    gpu2d_iris(gScreenTransition.progress);
++#endif
+     u32 v = sIrisWipeFlags;
+     if (v & 2) {
+         sIrisWipeActiveTable = sIrisWipeTableA;
+diff --git a/src/main/unk_02041e00.cpp b/src/main/unk_02041e00.cpp
+index 94bf1ff0..5d0c0731 100644
+--- a/src/main/unk_02041e00.cpp
++++ b/src/main/unk_02041e00.cpp
+@@ -2,6 +2,7 @@
+ #include "host_labels.h"
+ #include "uptr.h"
+ #include "types.h"
++#include "n3ds_options.h"
+ #include "sys/StackPad.h"
+ #include "sys/ClockDateTime.h"
+ #include "gfx/VecFx32.h"
+@@ -7713,7 +7714,11 @@ extern "C" s32 FieldAction_Add(FieldActionRequest *e, u32 a1, s32 type, Vec2 *po
+                     if (Inventory_GetEmptyLetter() == 0) {
+                         type++;
+                     }
++#ifdef N3DS_PORT
++                } else if (Pocket_FindEmpty() < 0 && Pocket_FindFruitStack(&a6) == -1) {  // (or onto a fruit stack)
++#else
+                 } else if (Pocket_FindEmpty() < 0) {
++#endif
+                     type++;
+                 }
+             }
+diff --git a/src/main/unk_0204a780.cpp b/src/main/unk_0204a780.cpp
+index 1d6a8e79..2e2909f5 100644
+--- a/src/main/unk_0204a780.cpp
++++ b/src/main/unk_0204a780.cpp
+@@ -1,4 +1,5 @@
+ #include "types.h"
++#include "n3ds_options.h"
+ #include "host_labels.h"
+ #include "field/MoneyRockState.h"
+ #include "town/TownState.h"
+@@ -643,6 +644,12 @@ extern "C" BOOL Item_Equals(u16 *a, u16 *b) {
+ 
+ namespace nC {
+ extern "C" s32 Item_GetPrice(u16 *p) {
++#ifdef N3DS_PORT
++    if (n3ds_fruit_count(*p) > 1) {  // (n3ds_options.h) a fruit stack: its fruit's price (Nook's local fruit rule) times n
++        u16 one = n3ds_fruit_one(*p);
++        return Item_GetPrice(&one) * n3ds_fruit_count(*p);
++    }
++#endif
+     ItemId a(p);
+     switch (Item_GetIdClass(&a.v)) {
+     case 1:
+diff --git a/src/main/unk_02052b50.cpp b/src/main/unk_02052b50.cpp
+index b9f7a28f..7a99b09c 100644
+--- a/src/main/unk_02052b50.cpp
++++ b/src/main/unk_02052b50.cpp
+@@ -1,5 +1,6 @@
+ #include "types.h"
+ #include "sys/RecordFile.h"
++#include "n3ds_options.h"
+ #include "game/InfoTableSet.h"
+ #include "nitro/io_access.h"
+ #include "proto/main/unk_02052b50.h"
+@@ -116,6 +117,11 @@ extern "C" {
+ 
+ void FtrInfoTables_Open(void *p)
+ {
++#ifdef N3DS_PORT  // (the EUR records' size, n3ds_options.h)
++    ((InfoTableSet *)p)->open((void *)"/ftr_info/always.bin", 8, (void *)"/ftr_info/indoor.bin", 4, (void *)"/ftr_info/dma.bin",
++                              N3ds_LangEur() ? 0x20 : 0x1c, 0x800);
++    return;
++#endif
+     ((InfoTableSet *)p)->open((void *)"/ftr_info/always.bin", 8, (void *)"/ftr_info/indoor.bin", 4, (void *)"/ftr_info/dma.bin", 0x1c, 0x800);
+ }
+ 
+@@ -495,10 +501,21 @@ s32 FtrInfo_GetIndoorFlagPair(s32 i) {
+ u8 *FtrInfo_GetName(s32 i) {
+     if (i >= 0x6e9) i = 0x6e8;
+     FtrInfoRecord *r = (FtrInfoRecord *)gFtrInfo.getDma()->getRecord(i);
++#ifdef N3DS_PORT
++    if (r && N3ds_LangEur()) return &r->ftrName + 1;  // (the EUR record's form byte, n3ds_options.h)
++#endif
+     if (r) return &r->ftrName;
+     return 0;
+ }
+ 
++#ifdef N3DS_PORT
++s32 N3ds_FtrNameForm(s32 i) {  // FtrInfo_GetNameForm with the EUR records' form byte (src/main/unk_02062530.cpp)
++    if (i >= 0x6e9) i = 0x6e8;
++    FtrInfoRecord *r = N3ds_LangEur() ? (FtrInfoRecord *)gFtrInfo.getDma()->getRecord(i) : 0;
++    return r ? (s8)(&r->ftrName)[0] : -1;
++}
++#endif
++
+ BOOL FtrInfo_TestIndoorFlag6(s32 i) {
+     if (i >= 0x6e9) i = 0x6e8;
+     FtrInfoRecord *r = (FtrInfoRecord *)gFtrInfo.getIndoor()->getRecord(i);
+diff --git a/src/main/unk_02061478.cpp b/src/main/unk_02061478.cpp
+index f63f2d5e..4d06129a 100644
+--- a/src/main/unk_02061478.cpp
++++ b/src/main/unk_02061478.cpp
+@@ -1,4 +1,5 @@
+ #include "types.h"
++#include "n3ds_options.h"
+ #include "talk/MsgStringAttr.h"
+ #include "item/ItemId.h"
+ #include "sys/RecordFile.h"
+@@ -295,6 +296,9 @@ static inline BOOL Unk_020622cc_IsFree(u16 *g, u16 *t) {
+ 
+ static inline u8 *Unk_02061e0c_Lookup(u32 v) {
+     u32 i = v & 0xfff;
++#ifdef N3DS_PORT
++    i = n3ds_item_record(i);  // (n3ds_options.h: a fruit stack's record is its fruit's)
++#endif
+     if (i >= 0x56e) i = 0x56d;
+     return gItemInfo.getAlways()->getRecord(i);
+ }
+@@ -318,6 +322,9 @@ static inline u16 Unk_02061e0c_Conv(u16 *p) {
+ 
+ static inline u8 *Unk_02062024_Lookup(u32 v) {
+     u32 i = v & 0xfff;
++#ifdef N3DS_PORT
++    i = n3ds_item_record(i);  // (n3ds_options.h: a fruit stack's record is its fruit's)
++#endif
+     if (i >= 0x56e) i = 0x56d;
+     return gItemInfo.getDma()->getRecord(i);
+ }
+@@ -326,6 +333,9 @@ extern "C" u16 *ItemInfo_GetName(u16 *p);
+ 
+ static inline BOOL Unk_0206198c_Tail(u32 v, u32 sh) {
+     u32 i = v & 0xfff;
++#ifdef N3DS_PORT
++    i = n3ds_item_record(i);  // (n3ds_options.h: a fruit stack's record is its fruit's)
++#endif
+     if (i >= 0x56e) i = 0x56d;
+     u8 *r = gItemInfo.getAlways()->getRecord(i);
+     if (r) return (r[9] >> sh) & 1 ? TRUE : FALSE;
+@@ -432,10 +442,16 @@ u16 *ItemInfo_GetName(u16 *p) {
+     if (Unk_02061e0c_InRange(p)) {
+         volatile u16 tmp = Unk_02061e0c_Conv(p);
+         u8 *r = Unk_02062024_Lookup(tmp);
++#ifdef N3DS_PORT
++        if (r && N3ds_LangEur()) r++;  // (the EUR record's form byte, n3ds_options.h)
++#endif
+         if (r) return (u16 *)(r + 2);
+         return 0;
+     }
+     u8 *r = Unk_02062024_Lookup(*p);
++#ifdef N3DS_PORT
++    if (r && N3ds_LangEur()) r++;  // (the EUR record's form byte, n3ds_options.h)
++#endif
+     if (r) return (u16 *)(r + 2);
+     return 0;
+ }
+@@ -446,7 +462,14 @@ s32 ItemInfo_GetUnk02(u16 *p) {
+     return 0;
+ }
+ 
++#ifdef N3DS_PORT
++s32 ItemInfo_GetNameForm(u16 *p) {  // (the EUR record's form byte, n3ds_options.h)
++    u8 *r = N3ds_LangEur() ? Unk_02062024_Lookup(*p) : 0;
++    return r ? (s8)r[2] : -1;
++}
++#else
+ s32 ItemInfo_GetNameForm(u16 *) { return -1; }
++#endif
+ 
+ s32 ItemInfo_GetNameAttrB(u16 *p) {
+     u8 *r = Unk_02062024_Lookup(*p);
+@@ -509,6 +532,9 @@ s32 ItemInfo_GetClass(u16 *p) {
+ 
+ s32 ItemInfo_GetUnk07(u16 *p) {
+     u32 i = *p & 0xfff;
++#ifdef N3DS_PORT
++    i = n3ds_item_record(i);  // (n3ds_options.h: a fruit stack's record is its fruit's)
++#endif
+     if (i >= 0x56e) i = 0x56d;
+     u8 *r = gItemInfo.getAlways()->getRecord(i);
+     if (r) return r[7];
+@@ -518,7 +544,10 @@ s32 ItemInfo_GetUnk07(u16 *p) {
+ s32 ItemInfo_GetSeason(u16 *p) {
+     if (ItemInfo_GetKind(p) == 5) {
+         u32 i = *p & 0xfff;
+-        if (i >= 0x56e) i = 0x56d;
++    #ifdef N3DS_PORT
++    i = n3ds_item_record(i);  // (n3ds_options.h: a fruit stack's record is its fruit's)
++#endif
++    if (i >= 0x56e) i = 0x56d;
+         u8 *r = gItemInfo.getAlways()->getRecord(i);
+         if (r) return r[8];
+         return 0;
+@@ -608,6 +637,9 @@ extern "C" BOOL ItemInfo_TestFlag4(u16 *p) {
+ 
+ extern "C" u32 ItemInfo_GetIndoorUnk1(u16 *p) {
+     u32 i = *p & 0xfff;
++#ifdef N3DS_PORT
++    i = n3ds_item_record(i);  // (n3ds_options.h: a fruit stack's record is its fruit's)
++#endif
+     if (i >= 0x56e) i = 0x56d;
+     u8 *r = gItemInfo.getIndoor()->getRecord(i);
+     if (r) return r[1];
+@@ -616,6 +648,9 @@ extern "C" u32 ItemInfo_GetIndoorUnk1(u16 *p) {
+ 
+ extern "C" u32 ItemInfo_GetIndoorUnk0(u16 *p) {
+     u32 i = *p & 0xfff;
++#ifdef N3DS_PORT
++    i = n3ds_item_record(i);  // (n3ds_options.h: a fruit stack's record is its fruit's)
++#endif
+     if (i >= 0x56e) i = 0x56d;
+     u8 *r = gItemInfo.getIndoor()->getRecord(i);
+     if (r) return r[0];
+diff --git a/src/main/unk_02062530.cpp b/src/main/unk_02062530.cpp
+index 2045711a..b855feec 100644
+--- a/src/main/unk_02062530.cpp
++++ b/src/main/unk_02062530.cpp
+@@ -1,4 +1,5 @@
+ #include "types.h"
++#include "n3ds_options.h"
+ #include "game/Unk_020dd30c_Buf.h"
+ #include "talk/MsgStringBase.h"
+ #include "talk/MsgStringAttr.h"
+@@ -127,6 +128,9 @@ extern "C" void ItemInfo_CountHoldable();
+ 
+ static inline u8 *Unk_02061e0c_Lookup(u32 v) {
+     u32 i = v & 0xfff;
++#ifdef N3DS_PORT
++    i = n3ds_item_record(i);  // (n3ds_options.h: a fruit stack's record is its fruit's)
++#endif
+     if (i >= 0x56e) i = 0x56d;
+     return (u8 *)func_0206d86c(func_0206d79c(gItemInfo), i);
+ }
+@@ -152,11 +156,17 @@ extern "C" u32 ItemInfo_GetPrice(u16 *p);
+ 
+ static inline u8 *Unk_02062024_Lookup(u32 v) {
+     u32 i = v & 0xfff;
++#ifdef N3DS_PORT
++    i = n3ds_item_record(i);  // (n3ds_options.h: a fruit stack's record is its fruit's)
++#endif
+     if (i >= 0x56e) i = 0x56d;
+     return (u8 *)func_0206d86c(func_0206d794(gItemInfo), i);
+ }
+ 
+ extern "C" s32 ItemInfo_GetNameForm(u16 *);
++#ifdef N3DS_PORT
++extern "C" s32 N3ds_FtrNameForm(s32 i);  // (src/main/unk_02052b50.cpp)
++#endif
+ 
+ extern "C" u16 *ItemInfo_GetName(u16 *p);
+ 
+@@ -372,6 +382,9 @@ BOOL ItemName::setFromItem(u16 *p) {
+         r->form = FtrInfo_GetNameForm();
+         r->attrB = FtrInfo_GetNameAttrB(x);
+         r->attrA = FtrInfo_GetNameAttrA(x);
++#ifdef N3DS_PORT
++        r->form = N3ds_FtrNameForm(x);
++#endif
+         return TRUE;
+     }
+     return FALSE;
+diff --git a/src/main/unk_02065e88.cpp b/src/main/unk_02065e88.cpp
+index b8417dd6..ac7f1364 100644
+--- a/src/main/unk_02065e88.cpp
++++ b/src/main/unk_02065e88.cpp
+@@ -63,6 +63,7 @@
+ #include "proto/main/unk_020b2c50.h"
+ #include "proto/main/unk_020742f4.h"
+ #include "proto/main/unk_02097444.h"
++#include "n3ds_ui.h"
+ 
+ struct VillagerState;
+ 
+@@ -1921,15 +1922,26 @@ void TalkFrame::uploadBg()
+     DC_FlushRange(screenData, 0x800);
+     GX_LoadBG2Scr(screenData, 0, 0x800);
+ }
++#ifdef N3DS_PORT
++int gN3dsTalkBgShown = 0;  // (n3ds_ui.h)
++#endif
+ extern "C" void TalkFrame_ShowBg()
+ {
+     Gfx2d_ShowMainPlanes(4);
+     Gfx2d_EnableMainWindows(1);
++#ifdef N3DS_PORT  // (the text box, BG2 in window 0, at the wide screen's bottom edge)
++    gpu2d_bg_anchor(0, 4, 1, N3DS_UI_BOTTOM);
++    gN3dsTalkBgShown = 1;
++#endif
+ }
+ extern "C" void TalkFrame_HideBg()
+ {
+     Gfx2d_HideMainPlanes(4);
+     Gfx2d_DisableMainWindows(1);
++#ifdef N3DS_PORT
++    gpu2d_bg_anchor(0, 0, 0, 0);
++    gN3dsTalkBgShown = 0;
++#endif
+ }
+ void TalkFrame::setScrollY(s32 y) { setScroll(0, y); }
+ void TalkFrame::setScroll(s32 x, s32 y)
+@@ -2276,8 +2288,15 @@ void TalkWindowState::update() {
+     if (state != 0 && state != 5) storeInputMode();
+ }
+ void TalkWindowState::draw() {
++#ifdef N3DS_PORT  // (n3ds_ui.h: the text box at the wide screen's bottom edge, its OBJs with its BG: TalkFrame_ShowBg)
++    int n = Oam_Count(0);
+     frame.draw();
+     choiceMenu.draw();
++    Oam_Anchor(0, n, N3DS_UI_BOTTOM);
++#else
++    frame.draw();
++    choiceMenu.draw();
++#endif
+ }
+ extern "C" BOOL Talk_IsAltTextEnabled() {
+     if (PlayerOptions_IsHiragana() == 0) return TRUE;
+diff --git a/src/main/unk_0206db88.cpp b/src/main/unk_0206db88.cpp
+index 30f0abf4..c4ed7c14 100644
+--- a/src/main/unk_0206db88.cpp
++++ b/src/main/unk_0206db88.cpp
+@@ -4,6 +4,7 @@
+ #include "types.h"
+ #include "gfx/BgVramTask.h"
+ #include "nitro/io_access.h"
++#include "n3ds_ui.h"
+ #include "player/PlayerData.h"
+ #include "proto/autoload_2/unk_020e8558.h"
+ #include "proto/dtcm/unk_027e0434.h"
+@@ -51,6 +52,11 @@ Slot16 sMenuScreenScroll;
+ Slot8 sMenuScreenWipeFlags;
+ Slot8 sMenuScreenBgKind;
+ HBlankTask sMenuWipeHBlankTask;
++#ifdef N3DS_PORT  // (the host draws the wipe's zigzag, gpu2d_menu_wipe: no window changed every line, the V-blank's part kept)
++#define MENU_WIPE_HBLANK NULL
++#else
++#define MENU_WIPE_HBLANK MenuScreen_WipeHBlank
++#endif
+ 
+ BOOL (*sMenuScreenSteps[])() = {
+     MenuScreen_StepAct00, MenuScreen_StepAct01, MenuScreen_StepAct02, MenuScreen_StepAct03, MenuScreen_StepAct04,
+@@ -84,6 +90,9 @@ extern "C" void MenuScreen_WipeInVBlank(void) {
+         }
+     }
+     IO_W((volatile u16 *)0x4000042, ((sMenuWipeEdge[0] << 8) & 0xff00) | 0xff);
++#ifdef N3DS_PORT
++    gpu2d_menu_wipe(sMenuWipePos.v);
++#endif
+ }
+ 
+ extern "C" void MenuScreen_WipeOutVBlank(void) {
+@@ -108,6 +117,9 @@ extern "C" void MenuScreen_WipeOutVBlank(void) {
+             sMenuWipeEdge[i] = t;
+         }
+     }
++#ifdef N3DS_PORT
++    gpu2d_menu_wipe(sMenuWipePos.v);
++#endif
+ }
+ 
+ extern "C" void MenuScreen_StopWipe(void) {
+@@ -120,7 +132,7 @@ extern "C" void MenuScreen_StopWipe(void) {
+ extern "C" void MenuScreen_StartWipeIn(void) {
+     s32 i;
+     sMenuWipePos.v = 0x117;
+-    if (HBlank_Add(&sMenuWipeHBlankTask, MenuScreen_WipeHBlank, MenuScreen_WipeInVBlank, 0)) {
++    if (HBlank_Add(&sMenuWipeHBlankTask, MENU_WIPE_HBLANK, MenuScreen_WipeInVBlank, 0)) {
+         sMenuScreenWipeFlags.v |= 1;
+     }
+     for (i = 0; i < 24; i++) {
+@@ -133,7 +145,7 @@ extern "C" void MenuScreen_StartWipeIn(void) {
+ extern "C" void MenuScreen_StartWipeOut(void) {
+     s32 i;
+     sMenuWipePos.v = 0;
+-    if (HBlank_Add(&sMenuWipeHBlankTask, MenuScreen_WipeHBlank, MenuScreen_WipeOutVBlank, 0)) {
++    if (HBlank_Add(&sMenuWipeHBlankTask, MENU_WIPE_HBLANK, MenuScreen_WipeOutVBlank, 0)) {
+         sMenuScreenWipeFlags.v |= 1;
+     }
+     for (i = 0; i < 24; i++) {
+diff --git a/src/main/unk_02087e70.cpp b/src/main/unk_02087e70.cpp
+index 64417cf6..f5a1a20c 100644
+--- a/src/main/unk_02087e70.cpp
++++ b/src/main/unk_02087e70.cpp
+@@ -11,6 +11,7 @@
+ #include "proto/itcm/unk_01ffcfc0.h"
+ #include "proto/main/unk_02087e70.h"
+ #include "proto/main/unk_02088b98.h"
++#include "n3ds_ui.h"
+ 
+ 
+ 
+@@ -108,9 +109,19 @@ extern "C" BOOL BugNet_HitTest(void *a, void *b, s32 rad, u8 *out) {
+     return result;
+ }
+ 
++#ifdef N3DS_PORT
++// (n3ds_ui.h: each entry's UI anchor, 0 none; given to the host with the buffers)
++static u8 sOamAnchorA[0x80], sOamAnchorB[0x80];
++extern "C" void gpu2d_obj_anchors(int engine, const void *oam, const u8 *anchors);  // (modern/host/gpu2d)
++#endif
++
+ extern "C" void Oam_LoadBuffers() {
+     GX_LoadOAM(sOamBufferA, 0, 0x400);
+     GXS_LoadOAM(sOamBufferB, 0, 0x400);
++#ifdef N3DS_PORT
++    gpu2d_obj_anchors(0, sOamBufferA, sOamAnchorA);
++    gpu2d_obj_anchors(1, sOamBufferB, sOamAnchorB);
++#endif
+ }
+ 
+ extern "C" void Oam_FlushBuffers() {
+@@ -128,6 +139,9 @@ extern "C" void Oam_ResetBuffers() {
+     sOamAffineCountA = 0;
+     sOamCountB = 0;
+     sOamAffineCountB = 0;
++#ifdef N3DS_PORT
++    for (int i = 0; i < 0x80; i++) sOamAnchorA[i] = sOamAnchorB[i] = 0;
++#endif
+ }
+ 
+ // obj: the object's OAM attributes (a GXOamAttr: attr0 / attr1, then attr2), drawn at x / y
+@@ -562,3 +576,11 @@ s32 sOamCountA;
+ s32 sOamAffineCountB;
+ 
+ s32 sOamAffineCountA;
++
++#ifdef N3DS_PORT
++extern "C" int Oam_Count(int mode) { return Oam_UseBufferA(mode) ? sOamCountA : sOamCountB; }
++extern "C" void Oam_Anchor(int mode, int from, unsigned anchor) {
++    u8 *t = Oam_UseBufferA(mode) ? sOamAnchorA : sOamAnchorB;
++    for (int i = from < 0 ? 0 : from, n = Oam_Count(mode); i < n; i++) t[i] = (u8)anchor;
++}
++#endif
+diff --git a/src/main/unk_02089fbc.cpp b/src/main/unk_02089fbc.cpp
+index 61de1329..4355c4a0 100644
+--- a/src/main/unk_02089fbc.cpp
++++ b/src/main/unk_02089fbc.cpp
+@@ -108,6 +108,7 @@ extern const u8 kHudCameraGridCells[18];
+ #include "proto/main/unk_02097444.h"
+ #include "proto/main/unk_020b7190.h"
+ #include "proto/main/unk_020b7d84.h"
++#include "n3ds_ui.h"
+ 
+ 
+ 
+@@ -1934,10 +1935,22 @@ void HudController::update() {
+ }
+ 
+ void HudController::draw() {
++#ifdef N3DS_PORT  // (n3ds_ui.h: each panel to the wide screen's edges it is near; they draw into buffer A)
++    int n = Oam_Count(0);
+     clock.callDraw();
++    Oam_Anchor(0, n, N3DS_UI_NEAR(0)), n = Oam_Count(0);
+     countdown.callDraw();
++    Oam_Anchor(0, n, N3DS_UI_NEAR(1)), n = Oam_Count(0);
+     ((HudCameraButton *)(&cameraButton))->callDraw();
++    Oam_Anchor(0, n, N3DS_UI_NEAR(2)), n = Oam_Count(0);
+     wallet.callDraw();
++    Oam_Anchor(0, n, N3DS_UI_NEAR(3));
++#else
++    clock.callDraw();
++    countdown.callDraw();
++    ((HudCameraButton *)(&cameraButton))->callDraw();
++    wallet.callDraw();
++#endif
+ }
+ 
+ void HudController::enterOff() {
+@@ -2131,10 +2144,21 @@ BOOL HudProc::onExecute() {
+ }
+ 
+ BOOL HudProc::onDraw() {
++#ifdef N3DS_PORT  // (n3ds_ui.h: each icon to the wide screen's edges it is near; Hud_Draw anchors its panels)
++    HudUnkSlideIcon_Draw();  // (not anchored: it slides sideways round the middle - not seen yet)
++    int n = Oam_Count(0);
++    HudLinkIcon_Draw();
++    Oam_Anchor(0, n, N3DS_UI_NEAR(5));
++    Hud_Draw();
++    n = Oam_Count(0);
++    HudUnkIcon_Draw();
++    Oam_Anchor(0, n, N3DS_UI_NEAR(6));
++#else
+     HudUnkSlideIcon_Draw();
+     HudLinkIcon_Draw();
+     Hud_Draw();
+     HudUnkIcon_Draw();
++#endif
+     return TRUE;
+ }
+ 
+diff --git a/src/main/unk_02098e90.cpp b/src/main/unk_02098e90.cpp
+index 9869dcd3..e0bba2d4 100644
+--- a/src/main/unk_02098e90.cpp
++++ b/src/main/unk_02098e90.cpp
+@@ -3,6 +3,7 @@
+ #include "talk/MsgString33.h"
+ #include "talk/MsgString9B.h"
+ #include "types.h"
++#include "n3ds_options.h"
+ #include "item/PocketMatches.h"
+ #include "item/ItemId.h"
+ #include "npc/VillagerId.h"
+@@ -2050,6 +2051,15 @@ extern "C" void Pocket_SetFoundItem(u16 *a, s32 b) {
+ }
+ 
+ extern "C" BOOL Pocket_AddFoundItem(u16 *a) {
++#ifdef N3DS_PORT
++    s32 k = Pocket_FindFruitStack(a);
++    if (k != -1) {  // onto the stack (stacked fruit, n3ds_options.h)
++        u16 v = *((PlayerInventory *)PlayerData_GetCurrent()->getInventory())->getPocket(k);
++        v = n3ds_fruit_make(n3ds_fruit_kind(v), n3ds_fruit_count(v) + 1);
++        Pocket_SetItem(&v, 0, k);
++        return TRUE;
++    }
++#endif
+     s32 r = Pocket_FindEmpty();
+     if (r == -1) return FALSE;
+     if (*a == 0xfff1) return TRUE;
+@@ -2078,11 +2088,19 @@ extern "C" void Pocket_RemoveItem(s32 c) {
+     void *r4 = PlayerData_GetCurrent();
+     if (Pocket_IsValidIndex(c)) {
+         u16 t = 0xfff1;
++#ifdef N3DS_PORT
++        // a fruit stack (n3ds_options.h): one fruit went (Pocket_GetItem gave one), the rest stays
++        t = n3ds_fruit_rest(*((PlayerInventory *)(((PlayerData *)(r4))->getInventory()))->getPocket(c));
++#endif
+         ((PlayerInventory *)(((PlayerData *)(r4))->getInventory()))->setPocket(&t, c, 0);
+     }
+ }
+ 
+ extern "C" u16 Pocket_GetItem(s32 i) {
++#ifdef N3DS_PORT
++    // the NPCs take a pocket's item with this and Pocket_RemoveItem: of a fruit stack one fruit (n3ds_options.h)
++    return n3ds_fruit_one(*((PlayerInventory *)PlayerData_GetCurrent()->getInventory())->getPocket(i));
++#endif
+     return *((PlayerInventory *)PlayerData_GetCurrent()->getInventory())->getPocket(i);
+ }
+ 
+diff --git a/src/main/unk_020a8ba0.cpp b/src/main/unk_020a8ba0.cpp
+index 98710881..1087d6db 100644
+--- a/src/main/unk_020a8ba0.cpp
++++ b/src/main/unk_020a8ba0.cpp
+@@ -37,6 +37,7 @@
+ #include "proto/main/unk_020a8ba0.h"
+ #include "proto/main/unk_020b7190.h"
+ #include "proto/main/unk_020b7d84.h"
++#include "n3ds_ui.h"
+ 
+ 
+ extern "C" {
+@@ -436,7 +437,13 @@ BOOL MsgUiProc::onExecute() {
+ BOOL MsgUiProc::onDraw() {
+     FieldInfoBalloon_Draw();
+     TalkWindow_DrawAll();
++#ifdef N3DS_PORT  // (n3ds_ui.h: to the wide screen's edges it is near; mode 3: the screen that isn't on top)
++    int n = Oam_Count(3);
+     InputModeIcon_Draw();
++    Oam_Anchor(3, n, N3DS_UI_NEAR(7));
++#else
++    InputModeIcon_Draw();
++#endif
+     return TRUE;
+ }
+ 
+diff --git a/src/main/unk_020a8c9c.cpp b/src/main/unk_020a8c9c.cpp
+index 0a1f2a6f..3191ceb9 100644
+--- a/src/main/unk_020a8c9c.cpp
++++ b/src/main/unk_020a8c9c.cpp
+@@ -26,6 +26,7 @@
+ #include "proto/main/unk_02087e70.h"
+ #include "proto/main/unk_020a8c9c.h"
+ #include "proto/main/unk_020b2c50.h"
++#include "n3ds_ui.h"
+ 
+ // ---------------------------------------------------------------------------------------------------------------------
+ // Classes from other files
+@@ -541,10 +542,16 @@ void ChoiceWindow::flushRowColors() {
+ 
+ void ChoiceWindow::showLayer() {
+     Gfx2d_ShowMainPlanes(2);
++#ifdef N3DS_PORT  // (n3ds_ui.h: the choices, BG1, with the text box they belong to - TalkFrame_ShowBg - and their cursor)
++    if (gN3dsTalkBgShown) gpu2d_bg_anchor(0, 6, 1, N3DS_UI_BOTTOM);
++#endif
+ }
+ 
+ void ChoiceWindow::hideLayer() {
+     Gfx2d_HideMainPlanes(2);
++#ifdef N3DS_PORT
++    if (gN3dsTalkBgShown) gpu2d_bg_anchor(0, 4, 1, N3DS_UI_BOTTOM);
++#endif
+ }
+ 
+ void ChoiceWindow::setScroll(s32 a, s32 b) {
+diff --git a/src/main/unk_020b8d9c.cpp b/src/main/unk_020b8d9c.cpp
+index 2ef81ac5..581813de 100644
+--- a/src/main/unk_020b8d9c.cpp
++++ b/src/main/unk_020b8d9c.cpp
+@@ -6291,6 +6291,30 @@ extern "C" void Sky_UpdateLineTables()
+     gWeatherManager.lineBufferIndex = idx;
+ }
+ 
++#ifdef N3DS_PORT
++extern "C" void gpu2d_margin_affine(int engine, int bg, int line, int pa, s32 x, s32 y);  // (modern/host/gpu2d)
++// The enhanced port's wide view: the cloud BG on the 24 lines above and below the DS's
++// screen, as the line tables would have them if they went on (Sky_UpdateLineTables's formulas; the screen's line L
++// shows table line L - 1 + the screen offset, as in Sky_HBlankMain / Sub; line 0 that of line 1 (Sky_VBlankMain /
++// Sub), and the lines above go on from it), so that the clouds' perspective goes on beyond the DS's edges
++static void Sky_GiveMarginLines(s32 engine)
++{
++    s32 idx = gWeatherManager.lineBufferIndex;
++    s32 off = gWeatherManager.screenOffsetY[gWeatherManager.bufferIndex];
++    for (s32 line = -24; line < 0xc0 + 24; line++) {
++        if (line == 0) line = 0xc0;
++        s32 j = (line < 0 ? line : line - 1) + off;
++        s32 t = -(j * 0x100) / 0xc0;
++        s32 pa = DS_DIV(0x10000, (t + 0x200));
++        s32 x = sSkyLineScrollX[idx] - (pa - 0x100) * 0x80;
++        s32 u = (j * 0xc000 / 0xc0 + 0x3000) / 0xc0;
++        s32 y = sSkyLineScrollY[idx] + (u * u >> 8) * 0xc0;
++        if (engine) x = (u16)x, y = (u16)y;  // (as Sky_HBlankSub writes them)
++        gpu2d_margin_affine(engine, 3, line, pa, x, y);
++    }
++}
++#endif
++
+ extern "C" void Sky_VBlankSub()
+ {
+     u8 t[2];
+@@ -6301,9 +6325,15 @@ extern "C" void Sky_VBlankSub()
+     v2 = sSkyGradient.keyColors[1];
+     REG16(HW_PLTT) = v2;
+     SkyLineAffine *e = gWeatherManager.lineAffine[gWeatherManager.lineBufferIndex];
++#ifdef N3DS_PORT  // (line 0 from the screen offset's table line, as line 1: the wide view's margin above goes on from it)
++    e += y < 0xc0 ? y : 0xbf;
++#endif
+     IO_W(&REG16(0x4001030), e->pa);
+     IO_W(&REG32(0x4001038), e->x);
+     IO_W(&REG32(0x400103c), e->y);
++#ifdef N3DS_PORT
++    Sky_GiveMarginLines(1);
++#endif
+     Clock_GetMinuteHour(t);
+     if (t[1] >= 6 && t[1] < 0x12) {
+         IO_W(&REG32(0x4001000), IO_R(&REG32(0x4001000)) & 0xfffffdff);
+@@ -6333,9 +6363,15 @@ extern "C" void Sky_VBlankMain()
+     v2 = sSkyGradient.keyColors[0];
+     REG16(HW_PLTT) = v2;
+     SkyLineAffine *e = gWeatherManager.lineAffine[gWeatherManager.lineBufferIndex];
++#ifdef N3DS_PORT  // (line 0 from the screen offset's table line, as line 1: the wide view's margin above goes on from it)
++    e += y < 0xc0 ? y : 0xbf;
++#endif
+     IO_W(&REG16(0x4000030), e->pa);
+     IO_W(&REG32(0x4000038), e->x);
+     IO_W(&REG32(0x400003c), e->y);
++#ifdef N3DS_PORT
++    Sky_GiveMarginLines(0);
++#endif
+     Clock_GetMinuteHour(t);
+     if (t[1] >= 6 && t[1] < 0x12) {
+         IO_W(&REG32(0x4000000), IO_R(&REG32(0x4000000)) & 0xfffffdff);

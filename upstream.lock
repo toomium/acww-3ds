@@ -1,0 +1,4 @@
+# The exact decompilation commit this port builds against.
+# Update it deliberately (and fix the patches) rather than tracking main.
+url=https://github.com/7ucina/acww-decomp.git
+commit=4e54d6abbd696a43213b0c600e7f466cf7b22f32

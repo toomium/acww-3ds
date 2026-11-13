@@ -1,0 +1,50 @@
+From: acww-3ds <noreply@invalid>
+Subject: [PATCH] Tools: remove the --plain build (the 3DS build without
+ N3DS_PORT)
+
+The comparison build is no longer needed. PORT stays: the PC build compiles the same sources without N3DS_PORT.
+---
+ docs/host.md            | 2 +-
+ tools/configure_host.py | 9 +--------
+ 2 files changed, 2 insertions(+), 9 deletions(-)
+
+diff --git a/docs/host.md b/docs/host.md
+index ef449ac..24de7fd 100644
+--- a/docs/host.md
++++ b/docs/host.md
+@@ -159,7 +159,7 @@ advance. Headless runs default to the fixed 2026-04-01 12:00:00, the clock the o
+ that scripted runs stay reproducible; `ACWW_RTC=host` gives them the local time), `ACWW_HEADLESS=1` (no window),
+ `ACWW_FAST=1` (not paced to 60 Hz; `ACWW_FAST=<frame>`: not paced until that frame), `ACWW_SHOT="frame:file.ppm;..."`, `ACWW_KEYS="frame:frames:mask;..."`, `ACWW_TOUCH="frame:frames:x,y;..."`;
+ `ACWW_WAV=file.wav` (the sound, also headless; ACWW_KEYS masks are hex KEYINPUT bits: 1 A, 2 B, 8 Start, 10 Right,
+-20 Left, 40 Up, 80 Down, 400 X, 800 Y), `ACWW_MUTE=1`, `ACWW_VOLUME=<percent>` (the 3DS: the sound's volume, default 100), `ACWW_3DS_SCALE=1.25` (the 3DS: the screens 1.25 times, 320x240, instead of 1:1), `ACWW_WIDE=1` (the 3DS: the 3D world beyond the DS's screen, to the 3DS screen's edges; on by default in the port, not in the `--plain` build, `ACWW_WIDE=0` off), `ACWW_SHOW_FPS=1` (the 3DS: the game's frames and the pictures shown a second, "60/30", in the top screen's corner); debugging: `ACWW_STATS`, `ACWW_FPS` (every 120 frames: frames a second and the slowest frame, the renderers' time,
++20 Left, 40 Up, 80 Down, 400 X, 800 Y), `ACWW_MUTE=1`, `ACWW_VOLUME=<percent>` (the 3DS: the sound's volume, default 100), `ACWW_3DS_SCALE=1.25` (the 3DS: the screens 1.25 times, 320x240, instead of 1:1), `ACWW_WIDE=1` (the 3DS: the 3D world beyond the DS's screen, to the 3DS screen's edges; on by default, `ACWW_WIDE=0` off), `ACWW_SHOW_FPS=1` (the 3DS: the game's frames and the pictures shown a second, "60/30", in the top screen's corner); debugging: `ACWW_STATS`, `ACWW_FPS` (every 120 frames: frames a second and the slowest frame, the renderers' time,
+ and a sampled profile: the milliseconds a frame in the game, the registers, DMA, the geometry engine, the renderers,
+ sound, the frontend and the pacing - also where `ACWW_PROFILE`'s signals aren't), `ACWW_IOLOG=addr`,
+ `ACWW_IOHIST` (register accesses by address and calling code, to `acww_iohist.txt`; written at exit, on SIGINT and
+diff --git a/tools/configure_host.py b/tools/configure_host.py
+index d132e35..df6c64b 100644
+--- a/tools/configure_host.py
++++ b/tools/configure_host.py
+@@ -83,9 +83,6 @@ parser.add_argument("--sanitize", default="",
+                          "the game's own heaps poisoned where unallocated, include/host_asan.h), bounds (array indexes "
+                          "against the declared size, also arrays inside structs) and undefined (the rest of UBSan); "
+                          "every report recovers (the run goes on), docs/host.md")
+-parser.add_argument("--plain", action="store_true",
+-                    help="--os 3ds: the comparison build for tests (a separate build: suffix _plain): N3DS_PORT not "
+-                         "defined, the PC port's model of the DS hardware kept; without it --os 3ds builds the port")
+ parser.add_argument("--regen-gen", action="store_true",
+                     help="regenerate modern/gen/gaps.c from the DS build's delinking (build/usa/delinks)")
+ parser.add_argument("version", nargs="?", default="usa")
+@@ -103,11 +100,7 @@ if N3DS:
+     if not os.path.exists(f"{DKA}/bin/arm-none-eabi-gcc") or not os.path.exists(f"{DKP}/libctru/lib/libctru.a"):
+         sys.exit(f"--os 3ds: no devkitARM and libctru in {DKP} (DEVKITPRO, DEVKITARM; `dkp-pacman -S 3ds-dev`)")
+     args.cc = f"{DKA}/bin/arm-none-eabi-gcc"
+-    if args.plain and not args.suffix:
+-        args.suffix = "_plain"
+-elif args.plain:
+-    sys.exit("--plain: --os 3ds only")
+-PORT = N3DS and not args.plain  # the 3DS port itself (N3DS_PORT); --plain is the build it is measured against
++PORT = N3DS  # the 3DS port itself (N3DS_PORT); the PC build compiles the same sources without it
+ if MAC:
+     if args.guards or args.oracle:
+         sys.exit("--os macos: no --guards or --oracle (GNU ld / melonDS builds)")

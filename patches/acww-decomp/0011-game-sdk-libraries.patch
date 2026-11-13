@@ -1,0 +1,293 @@
+From: acww-3ds export <noreply@invalid>
+Subject: [PATCH] The game's SDK libraries (autoload_2, itcm): card, sound streams, VRAM, input
+
+Changes 10 files of the decompilation for the 3DS port (area: game-sdk-libraries).
+Made by tools/export_from_fork.py; do not edit by hand.
+
+diff --git a/src/autoload_2/unk_020e8208.cpp b/src/autoload_2/unk_020e8208.cpp
+index ab482b18..a550a517 100644
+--- a/src/autoload_2/unk_020e8208.cpp
++++ b/src/autoload_2/unk_020e8208.cpp
+@@ -3,6 +3,9 @@
+ // mwcc 1.2/base, C++, ARM, -O4,p. Owns .rodata 0x02135914-0x02135934 and autoload_3 .bss 0x021f47d0-0x021f47e0.
+ #include "types.h"
+ #include "host_mem.h"
++#ifdef HOST
++#include "host_input.h"
++#endif
+ #include "sys/TreeNode.h"
+ #include "gfx/VecFx32.h"
+ #include "sys/ListNode.h"
+@@ -104,6 +107,9 @@ extern "C" void Pad_Update(void) {
+     sPadPrevHeld = keys;
+     gPad.cur = keys;
+     gPad.dir = kPadDirAngleTable[(keys & 0xf0) >> 4];
++#ifdef HOST
++    if (gHostStickTilt) gPad.dir = gHostStickAngle;  // (the 3DS's circle pad: any angle, include/host_input.h)
++#endif
+ }
+ 
+ // ---- file-scope objects (defined after their users)
+diff --git a/src/autoload_2/unk_0210da28.c b/src/autoload_2/unk_0210da28.c
+index 911aab96..f2b27f10 100644
+--- a/src/autoload_2/unk_0210da28.c
++++ b/src/autoload_2/unk_0210da28.c
+@@ -210,6 +210,16 @@ void NNS_SndArcStrmInit(u32 prio, void *heap)
+ }
+ 
+ // NNSi_SndArcStrmSetupBuffers-like (read channel tables, allocate stream buffers from heap)
++#ifdef N3DS_PORT
++// The enhanced port: the ARM7's sound runs on a thread of its own ahead of the game's,
++// whose answers to the stream's alarms come up to a frame late or later; with the DS's 2 KB a channel (blocks of
++// about 5 ms, refilled within 16 ms) most blocks were dropped as silence, so the buffers are 16 times as large (blocks
++// of about 86 ms at the title's 47605 Hz). The sound heap's block still marks the buffer's lifetime
++// (StrmBufDisposeCallback).
++static u8 sStrmBuf[4][6 << 15] __attribute__((aligned(32)));
++static void *sStrmHeapMem[4];
++#endif
++
+ BOOL SetupStrmPlayers(void *heap)
+ {
+     s32 i;
+@@ -231,6 +241,11 @@ BOOL SetupStrmPlayers(void *heap)
+             mem = NNS_SndHeapAlloc(heap, size, StrmBufDisposeCallback, c, 0);
+             if (mem == 0) return 0;
+             ForceStopStrm__sndarc_stream(c);
++#ifdef N3DS_PORT
++            sStrmHeapMem[i] = mem;
++            mem = sStrmBuf[i];
++            size = c->numChannels << 15;
++#endif
+             c->buffer = mem;
+             c->bufSize = size;
+         }
+@@ -579,7 +594,11 @@ void FreeCommandBuffer(NNSSndStrmLoadCommand *job)
+ void StrmBufDisposeCallback(void *mem, u32 size, void *arg, u32 unused)
+ {
+     NNSSndStrmPlayer *c = arg;
++#ifdef N3DS_PORT
++    if (mem != sStrmHeapMem[c - data_021fc650]) return;
++#else
+     if (mem != c->buffer) return;
++#endif
+     OS_LockMutex(&data_021fc160.mutex);
+     if (data_021fbdac != 0) OS_LockMutex(&data_021fbdac->mutex);
+     ForceStopStrm__sndarc_stream(c);
+diff --git a/src/autoload_2/unk_0210f154.c b/src/autoload_2/unk_0210f154.c
+index 1d019c4c..90ba8df5 100644
+--- a/src/autoload_2/unk_0210f154.c
++++ b/src/autoload_2/unk_0210f154.c
+@@ -127,6 +127,13 @@ u32 GX_ResetBankForTex(void) { return resetBankForX_(&data_021fcbe0); }
+ // GX_ResetBankForTexPltt
+ u32 GX_ResetBankForTexPltt(void) { return resetBankForX_(&data_021fcbe2); }
+ 
++#ifdef N3DS_PORT
++// the enhanced port (VRAM): the texture and texture palette banks, left where they are for an
++// upload (GX_BeginLoadTex, GX_BeginLoadTexPltt)
++u32 GXi_TexBanks(void) { return data_021fcbe0; }
++u32 GXi_TexPlttBanks(void) { return data_021fcbe2; }
++#endif
++
+ // GXi_DisableBank (clears the VRAMCNT registers of the banks in *p)
+ u32 disableBankForX_(u16 *p) {
+     u32 v = *p;
+diff --git a/src/autoload_2/unk_02111ccc.c b/src/autoload_2/unk_02111ccc.c
+index 5d8d8f14..3446ef4a 100644
+--- a/src/autoload_2/unk_02111ccc.c
++++ b/src/autoload_2/unk_02111ccc.c
+@@ -42,7 +42,9 @@ void GX_EndLoadTex(void) {
+     if (data_0213bfec != -1) {
+         MI_WaitDma(data_0213bfec);
+     }
++#ifndef N3DS_PORT  // (the enhanced port: they stayed mapped, GX_BeginLoadTex)
+     GX_SetBankForTex(data_021fcc00);
++#endif
+     data_021fcc08 = 0;
+     data_021fcc04 = 0;
+     data_021fcbf4 = 0;
+@@ -51,13 +53,22 @@ void GX_EndLoadTex(void) {
+ 
+ // GX_BeginLoadBGExtPltt
+ void GX_BeginLoadTexPltt(void) {
++#ifdef N3DS_PORT  // (the banks stay mapped: GX_LoadTexPltt writes into their memory)
++    u32 GXi_TexPlttBanks(void);
++    s32 v = (s32)GXi_TexPlttBanks();
++#else
+     s32 v = GX_ResetBankForTexPltt();
++#endif
+     data_021fcbfc = v;
+     data_021fcbf8 = (u32)data_02139f44[v >> 4] << 12;
+ }
+ 
+ // GX_LoadBGExtPltt
+ void GX_LoadTexPltt(const void *src, u32 offset, u32 size) {
++#ifdef N3DS_PORT  // (the enhanced port: straight into the banks' own memory, at once)
++    MIi_CpuCopy32(src, host_vram_lcdc_direct(data_021fcbf8 + offset, size), size);
++    return;
++#endif
+     u8 *dest = (u8 *)HostVram_CpuPtr(data_021fcbf8 + offset);  // (a VRAM address: LCDC)
+     if (data_0213bfec != -1) {
+         MI_DmaCopy32Async(data_0213bfec, src, dest, size, 0, 0);
+@@ -71,7 +82,9 @@ void GX_EndLoadTexPltt(void) {
+     if (data_0213bfec != -1) {
+         MI_WaitDma(data_0213bfec);
+     }
++#ifndef N3DS_PORT  // (the enhanced port: they stayed mapped, GX_BeginLoadTexPltt)
+     GX_SetBankForTexPltt(data_021fcbfc);
++#endif
+     data_021fcbfc = 0;
+     data_021fcbf8 = 0;
+ }
+diff --git a/src/autoload_2/unk_021120a8.c b/src/autoload_2/unk_021120a8.c
+index 8a711de8..c6308c17 100644
+--- a/src/autoload_2/unk_021120a8.c
++++ b/src/autoload_2/unk_021120a8.c
+@@ -36,6 +36,11 @@ static inline void GXi_DmaCopy32Async(s32 dmaNo, const void *src, void *dest, u3
+ // GX_LoadTex
+ void GX_LoadTex(const void *pSrc, u32 dstSlotOffset, u32 szByte) {
+     void *pLCDC;
++#ifdef N3DS_PORT
++    void N3ds_GxLoadTex(const void *pSrc, u32 dstSlotOffset, u32 szByte);  // (modern/n3ds/gx_direct.c)
++    N3ds_GxLoadTex(pSrc, dstSlotOffset, szByte);
++    return;
++#endif
+ 
+     if (0 == data_021fcc04) {
+         pLCDC = HostVram_CpuPtr(data_021fcbf4 + dstSlotOffset);
+diff --git a/src/autoload_2/unk_0211220c.c b/src/autoload_2/unk_0211220c.c
+index e6ae880e..dc40d852 100644
+--- a/src/autoload_2/unk_0211220c.c
++++ b/src/autoload_2/unk_0211220c.c
+@@ -15,7 +15,12 @@ s32 GX_ResetBankForTex(void);
+ 
+ // GX_BeginLoadTex
+ void GX_BeginLoadTex(void) {
++#ifdef N3DS_PORT  // (the banks stay mapped: GX_LoadTex writes into their memory)
++    u32 GXi_TexBanks(void);
++    s32 i = (s32)GXi_TexBanks();
++#else
+     s32 i = GX_ResetBankForTex();
++#endif
+     data_021fcc00 = i;
+     data_021fcbf4 = (u32)data_02139f54[i].x << 12;
+     data_021fcc04 = (u32)data_02139f56[i].x << 12;
+diff --git a/src/autoload_2/unk_02119434.c b/src/autoload_2/unk_02119434.c
+index d5a5371a..7d23f42a 100644
+--- a/src/autoload_2/unk_02119434.c
++++ b/src/autoload_2/unk_02119434.c
+@@ -211,6 +211,10 @@ s32 FSi_ReadFileCore(FSFile *file, void *dst, s32 len, BOOL async) {
+ // FS_ConvertPathToFileID
+ BOOL FS_ConvertPathToFileID(FSFileID *id, const char *path) {
+     FSFile tmp;
++#ifdef N3DS_PORT  // (the enhanced port: a file of the chosen language from the EUR ROM, modern/ds/n3ds_lang.c)
++    extern BOOL N3ds_LangFileID(FSFileID *id, const char *path);
++    if (N3ds_LangFileID(id, path)) return 1;
++#endif
+     FS_InitFile(&tmp);
+     return FSi_FindPath(&tmp, path, id, 0) ? 1 : 0;
+ }
+diff --git a/src/autoload_2/unk_02119de4.c b/src/autoload_2/unk_02119de4.c
+index 1de4db62..c541b959 100644
+--- a/src/autoload_2/unk_02119de4.c
++++ b/src/autoload_2/unk_02119de4.c
+@@ -163,6 +163,10 @@ void FSi_InitRom(u32 dma) {
+             FS_LoadArchive(&data_021fea94, 0, fat->offset, fat->length, fnt->offset, fnt->length, FSi_ReadRomCallback,
+                           (int (*)(FSArc *, void *, u32, u32))FSi_WriteDummyCallback);
+         }
++#ifdef N3DS_PORT  // (the enhanced port: the EUR ROM's archive, modern/ds/n3ds_lang.c)
++        extern void N3ds_LangInit(void);
++        N3ds_LangInit();
++#endif
+     }
+ }
+ 
+diff --git a/src/autoload_2/unk_0211dc4c.c b/src/autoload_2/unk_0211dc4c.c
+index 66af08c2..8130354c 100644
+--- a/src/autoload_2/unk_0211dc4c.c
++++ b/src/autoload_2/unk_0211dc4c.c
+@@ -197,6 +197,21 @@ void CARDi_ReadRom(u32 cmd, u32 off, void *dst, u32 len, void (*cb)(void *), voi
+     c->dst = (uptr)dst;
+     c->len = len;
+     if (cmd <= 3) MI_StopDma(cmd);
++#ifdef N3DS_PORT
++    {   // the enhanced port: the whole read from the ROM image at once (card.c), not page by
++        // page through the card's registers and DMA; then finished as the SDK finishes a read
++        extern void host_card_read(u32 addr, void *dst, u32 n);
++        host_card_read(c->src, (void *)c->dst, c->len);
++        c->src += c->len, c->dst += c->len, c->len = 0;
++        if (async) {
++            CARDi_SetTask(CARDi_ReadRomSyncCore);
++            return;
++        }
++        c->curThread = data_021fcc2c.current;
++        CARDi_ReadRomSyncCore(c);
++        return;
++    }
++#endif
+     if (CARDi_TryReadCardDma(d)) {
+         if (async) return;
+         CARD_WaitRomAsync();
+@@ -286,6 +301,29 @@ void CARDi_RequestStreamCommandCore(CARDCommon *c) {
+     if (cb) cb(arg);
+ }
+ 
++#ifdef N3DS_PORT
++// The enhanced port: a stream command on the save memory done at once in the host
++// (pxi7.c), not 256 bytes at a time through the ARM7 with a reply to wait for each, then finished as
++// CARDi_RequestStreamCommandCore finishes. An async one (on the card thread) finishes a millisecond later: the game
++// takes an async request that is done when it returns for a failed one (Backup_ReadAsync).
++void OS_Sleep(u32 msec);
++static void CARDi_StreamHost(CARDCommon *c) {
++    extern u32 pxi7_backup(uptr src, uptr dst, u32 len, u32 op, u32 total);
++    void (*cb)(void *) = c->callback;
++    void *arg = c->cbArg;
++    u32 irq;
++    c->cmd->result = pxi7_backup(c->src, c->dst, c->len, c->f2c, c->cmd->f18);
++    c->src += c->len, c->dst += c->len, c->len = 0;
++    if (c->curThread == &c->thread) OS_Sleep(1);  // (an async request: on the card thread, CARDi_SetTask)
++    irq = OS_DisableInterrupts();
++    c->flag &= ~0x4c;
++    OS_WakeupThread(&c->tq);
++    if (c->flag & 0x10) OS_WakeupThreadDirect(&c->thread);
++    OS_RestoreInterrupts(irq);
++    if (cb) cb(arg);
++}
++#endif
++
+ // CARDi_RequestStreamCommand~ (src, dst, len, callback, arg, is_async, req_type, retry, mode)
+ BOOL CARDi_RequestStreamCommand(uptr a, uptr b, u32 len, void (*cb)(void *), void *arg, BOOL async, u32 g, u32 h, u32 mode) {
+     CARDCommon *const c = &data_021fec00;
+@@ -303,6 +341,15 @@ BOOL CARDi_RequestStreamCommand(uptr a, uptr b, u32 len, void (*cb)(void *), voi
+     c->f2c = g;
+     c->f30 = h;
+     c->f34 = mode;
++#ifdef N3DS_PORT
++    if (async) {  // (CARDi_StreamHost on the card thread)
++        CARDi_SetTask(CARDi_StreamHost);
++        return 1;
++    }
++    data_021fec00.curThread = data_021fcc2c.current;
++    CARDi_StreamHost(c);
++    return c->cmd->result == 0;
++#endif
+     if (async) {
+         CARDi_SetTask(CARDi_RequestStreamCommandCore);
+         return 1;
+diff --git a/src/itcm/unk_01ff8ad4.c b/src/itcm/unk_01ff8ad4.c
+index e529e13f..25b51f8f 100644
+--- a/src/itcm/unk_01ff8ad4.c
++++ b/src/itcm/unk_01ff8ad4.c
+@@ -902,6 +902,13 @@ void NNS_G3dGeSendDL(const void *src, u32 szByte) {
+         return;
+     }
+     NNS_G3dGeFlushBuffer();
++#ifdef N3DS_PORT
++    // the enhanced port: the list straight into the geometry engine, which runs it in place without time, not by
++    // the GX FIFO's DMA in pieces of 472 bytes with an interrupt, the DMA's registers and the masks after each (the
++    // callback only cleared the busy flag, set above)
++    MIi_CpuSend32(src, &reg_G3X_GXFIFO, szByte);
++    return;
++#endif
+     data_021f89c8 = 1;
+     if (data_021f89cc) {
+         MI_SendGXCommandAsyncFast(data_0213bfec, src, szByte, simpleUnlock_, (void *)&data_021f89c8);

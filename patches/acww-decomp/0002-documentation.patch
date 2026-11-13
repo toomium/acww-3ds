@@ -1,0 +1,51 @@
+From: acww-3ds export <noreply@invalid>
+Subject: [PATCH] Documentation of the runtime
+
+Changes 1 files of the decompilation for the 3DS port (area: documentation).
+Made by tools/export_from_fork.py; do not edit by hand.
+
+diff --git a/docs/host.md b/docs/host.md
+index e13c0d00..ef449ac7 100644
+--- a/docs/host.md
++++ b/docs/host.md
+@@ -159,7 +159,9 @@ advance. Headless runs default to the fixed 2026-04-01 12:00:00, the clock the o
+ that scripted runs stay reproducible; `ACWW_RTC=host` gives them the local time), `ACWW_HEADLESS=1` (no window),
+ `ACWW_FAST=1` (not paced to 60 Hz; `ACWW_FAST=<frame>`: not paced until that frame), `ACWW_SHOT="frame:file.ppm;..."`, `ACWW_KEYS="frame:frames:mask;..."`, `ACWW_TOUCH="frame:frames:x,y;..."`;
+ `ACWW_WAV=file.wav` (the sound, also headless; ACWW_KEYS masks are hex KEYINPUT bits: 1 A, 2 B, 8 Start, 10 Right,
+-20 Left, 40 Up, 80 Down, 400 X, 800 Y), `ACWW_MUTE=1`; debugging: `ACWW_STATS`, `ACWW_FPS`, `ACWW_IOLOG=addr`,
++20 Left, 40 Up, 80 Down, 400 X, 800 Y), `ACWW_MUTE=1`, `ACWW_VOLUME=<percent>` (the 3DS: the sound's volume, default 100), `ACWW_3DS_SCALE=1.25` (the 3DS: the screens 1.25 times, 320x240, instead of 1:1), `ACWW_WIDE=1` (the 3DS: the 3D world beyond the DS's screen, to the 3DS screen's edges; on by default in the port, not in the `--plain` build, `ACWW_WIDE=0` off), `ACWW_SHOW_FPS=1` (the 3DS: the game's frames and the pictures shown a second, "60/30", in the top screen's corner); debugging: `ACWW_STATS`, `ACWW_FPS` (every 120 frames: frames a second and the slowest frame, the renderers' time,
++and a sampled profile: the milliseconds a frame in the game, the registers, DMA, the geometry engine, the renderers,
++sound, the frontend and the pacing - also where `ACWW_PROFILE`'s signals aren't), `ACWW_IOLOG=addr`,
+ `ACWW_IOHIST` (register accesses by address and calling code, to `acww_iohist.txt`; written at exit, on SIGINT and
+ at `ACWW_EXIT_FRAME`), `ACWW_IOTRACE=<file>` and `ACWW_IOTRACE_FRAMES=<from>-<to>` (the register traffic frame by frame: "Virtual time"), `ACWW_TIMING=legacy` (the earlier access-counting virtual time), `ACWW_POSLOG=<n>` (the local player's
+ position every n frames: for writing input scripts that walk somewhere), `ACWW_WATCH=addr:len` (x86 Linux),
+@@ -482,20 +484,23 @@ matching build and with the i386 build's screenshots and sound staying bit-ident
+   `Visitor_CheckTomNook` wants the previous scene to be a house room), tells about the loan, walks off and clears the
+   new-town state (`SpNpcNookIntro::mainAct04` -> `GameStart_Clear`); from then on Start opens "Do you want to quit
+   playing for now?" with "Save and end" first: the save (both copies of the town data, 0x0-0x2bfc0 in 256-byte
+-  writes, each verified) and the title screen. The scripts that get there are `tools/host_play_script.py town|save|continue` (one script for
++  writes, each verified) and the title screen. The scripts that get there are `tools/host_play_script.py town|save|continue|menu` (one script for
+   every build since docs/portability.md 3.4; `eval "$(python3 tools/host_play_script.py save)"` sets `ACWW_KEYS` and
+   `ACWW_TOUCH`; the oracle's firmware image, the default pinned clock, a fresh `ACWW_SAVE`). With the frame-based time
+   the game reaches each point sooner and makes a different town (its random seeds come from the clock): `town` - the
+   touch at (128,96) at 2200, A every 60 frames from 2400 and Start every 60 from 7650 to 21050, a touch at (218,180)
+   every 600 frames from 7630 (the name entries; the town at ~12000, Kapp'n's warp to the town hall), then B every 60
+-  frames to 21700 (closes Pelly's last talk) and Down 21800-22200: out of the town hall in front of it at (145, 56),
+-  frame ~22150. `save` adds the walk to the house (Down 100 frames, past a tree with Right 30, Down 380 over the
+-  bridge, Left 400 along the river's south bank, Down 200, Left 165, Up 150: the door at (81, 109), frame ~23900), A
++  frames to 21700 (closes Pelly's last talk) and Down 21800-22200: out of the town hall in front of it at (113, 56),
++  frame ~22150. `save` adds the walk to the house (Down 545 frames past the house's west side, Right 65, Up 150: the
++  door at (119, 109), frame ~23250; the town and the walk since `NpcAnimCtrl::isAnimFinished` was fixed, which
++  changed Kapp'n's animations and with them the random numbers the new town is made from), A
+   at 24000-24240 every 60 (into the house), Down at 24900 (back out: Tom Nook), A every 60 frames 25300-31840 (his
+   talk), Start at 32300 and A at 32500, 32700, ..., 33500 (Save and end; "Come back and see us again" at ~32750), the
+   title at ~34500. `continue` (A every 60 frames from 2400 with that save file): the greeting, the player waking up in
+-  the house, in front of the house in town from ~4500. Under `ACWW_TIMING=legacy` the earlier i386 script still
+-  applies (A and Start to 21050, Down 21100-21500, the walk 23200:60:80 23300:200:10 23520:220:80 23750:620:10
++  the house, in front of the house in town from ~4300. `menu` (2026-11-04): A every 60 frames 2400-3500 with that
++  save file, the player out of the house at ~4100, Y at 4400: the pause menu on the pockets from ~4450 (the PC
++  build; R / L at later frames go through its tabs). Under `ACWW_TIMING=legacy` the earlier i386 script
++  applied before the isAnimFinished fix (since then **unverified**: the fix changes that town too) (A and Start to 21050, Down 21100-21500, the walk 23200:60:80 23300:200:10 23520:220:80 23750:620:10
+   24380:120:80 24510:400:10 24970:175:40 25150:64:10 25220:100:40 25330:14:20 25350:150:40 to the door at (151, 109), A
+   at 25700-25940, 26600:150:80, A 27000-33540, Start 34000, A 34200-35200: the save at 34786-34907). With
+   `ACWW_RTC="2026-10-08 18:30:00"` the continue shows 10/8 (Thursday) 6:30 PM, the evening sky and the weeds of the

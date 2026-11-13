@@ -1,0 +1,48 @@
+name: Website
+
+# The web builder's website (web/) on GitHub Pages, with the latest release's program (tools/build_site.py):
+# published again for every release (build.yml's release job runs this), and when the site itself changes on main.
+# (Pages must be set to "GitHub Actions" in the repository's settings: Settings > Pages > Source.)
+on:
+  release:
+    types: [published, deleted]
+  push:
+    branches: [main]
+    paths: ["web/**", "tools/build_site.py", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: The site, with the latest release's program (if there is a release)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          tag=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName --jq '.[0].tagName' || true)
+          if [ -n "$tag" ] && gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern acww.3dsx --pattern acww.cia --dir dist; then
+            python3 tools/build_site.py --out _site --release-dir dist --tag "$tag"
+          else
+            python3 tools/build_site.py --out _site
+          fi
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

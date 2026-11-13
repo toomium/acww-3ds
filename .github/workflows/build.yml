@@ -1,0 +1,150 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    # A version tag (v0.1.0) also publishes a release (the release job below).
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+# A build contains the game's code: it is uploaded only for a release (a version tag), as the release's file.
+jobs:
+  tools:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tool unit tests (every tools/test_*.py)
+        run: python3 -m unittest discover -s tools -p 'test_*.py' -v
+      - name: The web builder's tests (made-up bytes only)
+        run: node tools/test_web.mjs
+      - name: CI uploads only the allowed files (a release's files, the site)
+        run: python3 tools/check_ci_artifacts.py
+      # The page in a real browser (the runner's Chrome) with made-up bytes: choosing files, fetching the site's
+      # program, the ZIP's names and bytes.
+      - name: The web builder in a browser (made-up bytes only)
+        timeout-minutes: 3
+        run: node tools/test_web_browser.mjs google-chrome
+      - name: No game content in the repository
+        run: |
+          found=$(find . -path ./.git -prune -o -type f \( -name '*.nds' -o -name '*.sav' -o -name '*.3dsx' \
+              -o -name '*.elf' -o -name '*.cdc' -o -name '*.o' \) -print)
+          test -z "$found" || { echo "::error::game content or a build: $found"; exit 1; }
+
+  # 3DS builds use the official devkitPro toolchain.
+  build-3ds:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container: devkitpro/devkitarm:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Python, Git, ninja and a PC C compiler
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends python3 git ca-certificates ninja-build make gcc g++ libc6-dev
+      - name: Fetch the decompilation (fresh; check the patches)
+        run: python3 tools/bootstrap.py --clean
+      # The version in the program's log: a release's tag, else dev- and the commit (a pull request's own).
+      - name: The port's version
+        shell: bash
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then v="$GITHUB_REF_NAME"; else v="dev-${HEAD_SHA::7}"; fi
+          echo "PORT_VERSION=$v" >> "$GITHUB_ENV"
+          echo "The port's version: $v"
+      - name: Build the port
+        shell: bash
+        run: |
+          set -o pipefail
+          make game 2>&1 | tee build-game.log || {
+            grep -iE "error|undefined reference|\*\*\*" build-game.log | head -20 | sed 's/^/::error::/' || true
+            tail -15 build-game.log | sed 's/^/::error title=Last lines::/' || true
+            exit 1
+          }
+
+      # The HOME Menu version: the forwarder, no game code (makerom and bannertool are built from source).
+      - name: Build the HOME Menu version (.cia)
+        timeout-minutes: 10
+        run: make cia
+
+      # A release's files: the program, the .cia and their checksums. Kept for the release job only on a version tag.
+      - name: The release's files
+        shell: bash
+        run: |
+          mkdir -p dist/release
+          cp build/upstream/build/host3ds_usa/acww.3dsx build/cia/acww.cia dist/release/
+          (cd dist/release && sha256sum acww.3dsx acww.cia > SHA256SUMS.txt && cat SHA256SUMS.txt)
+      - name: Upload the release's files (version tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: dist/release/
+
+  build-pc:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ninja and gcc-14
+        run: sudo apt-get update && sudo apt-get install -y ninja-build gcc-14 g++-14
+      - name: Fetch the decompilation (fresh; check the patches)
+        run: python3 tools/bootstrap.py --clean
+      - name: Build for the PC
+        run: make pc
+      - name: Start-up smoke test (a made-up ROM, no game data)
+        timeout-minutes: 2
+        run: python3 tools/boot_smoke.py build/upstream/build/host64_usa/acww
+
+  # A version tag: once every build and test passed, its release, with the file build-3ds made.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [tools, build-3ds, build-pc]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: write          # (to start the website's workflow, below)
+    steps:
+      # (for the release's notes: docs/releases/<tag>.md, if written)
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: docs/releases
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: dist/release
+      # The notes: docs/releases/<tag>.md if there is one, else GitHub's list of the merged pull requests.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          OWN="docs/releases/$GITHUB_REF_NAME.md"
+          GENERATE=""
+          if [ -f "$OWN" ]; then
+            { cat "$OWN"; echo; echo "---"; echo; } > notes.md
+          else
+            : > notes.md
+            GENERATE="--generate-notes"
+          fi
+          cat >> notes.md <<'NOTES'
+          You need your own dump of Animal Crossing: Wild World (USA, Rev 1). The web builder puts it and this program together for the SD card, in your browser.
+
+          - `acww.3dsx`: the program, for the Homebrew Launcher (`sd:/3ds/acww/`, beside `game.pak`, the data pack the web builder makes from your ROM).
+          - `acww.cia`: optional, the HOME Menu version (install it with FBI): it opens `acww.3dsx` from the SD card, so it needs the files above.
+          - `SHA256SUMS.txt`: the checksums.
+          NOTES
+          PRERELEASE=""
+          case "$GITHUB_REF_NAME" in *-*) PRERELEASE="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/release/* --repo "$GITHUB_REPOSITORY" \
+              --verify-tag --title "Animal Crossing: Wild World 3DS $GITHUB_REF_NAME" \
+              --notes-file notes.md $GENERATE $PRERELEASE
+      # The website with this release's file (pages.yml). A release made with this workflow's token doesn't start
+      # other workflows by itself; asking for a run does.
+      - name: Update the website
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main

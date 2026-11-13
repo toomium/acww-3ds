@@ -1,0 +1,232 @@
+From: acww-3ds export <noreply@invalid>
+Subject: [PATCH] Frontends and platform layers
+
+Changes 6 files of the decompilation for the 3DS port (area: frontend-and-platform).
+Made by tools/export_from_fork.py; do not edit by hand.
+
+diff --git a/modern/host/frontend.c b/modern/host/frontend.c
+index 5c3963d9..cb49dc1e 100644
+--- a/modern/host/frontend.c
++++ b/modern/host/frontend.c
+@@ -4,12 +4,14 @@
+ // device, input only from ACWW_KEYS / ACWW_TOUCH.
+ 
+ #include <stdio.h>
++#include <math.h>
+ #include <stdlib.h>
+ #include <string.h>
+ 
+ #include "frontend.h"
+ #include "host.h"
+ #include "host_mem.h"
++#include "options_3ds.h"
+ 
+ static AcwwShm *sShm;
+ 
+@@ -23,42 +25,78 @@ void frontend_init(const char *argv0) {
+ 
+ AcwwShm *frontend_shm(void) { return sShm; }
+ 
++// the circle pad for the game (include/host_input.h): its angle and tilt while it holds a direction down
++volatile short gHostStickAngle;
++volatile unsigned short gHostStickTilt;
++static void stick(const AcwwShm *shm, u32 keys) {
++    static int on = -1;
++    if (on < 0) on = !getenv("ACWW_ANALOG") || atoi(getenv("ACWW_ANALOG"));
++    float x = shm->stick_x, y = shm->stick_y, r = sqrtf(x * x + y * y);
++    if (!on || !(keys & 0xf0) || r < 20) { gHostStickTilt = 0; return; }
++    gHostStickAngle = (short)lrintf(atan2f(x, -y) * (32768.0f / 3.14159265f));  // (0 down, 0x4000 right)
++    gHostStickTilt = (unsigned short)(r >= 150 ? 0x1000 : r * 0x1000 / 150);
++}
++
+ // scripted keys for headless runs: ACWW_KEYS="frame:frames:mask;..." (mask: the bits of AcwwShm.keys, hex)
++// (ACWW_KEYS read once: an input script is several KB, and reading it again every frame took much of a run's time)
+ static u32 scripted_keys(void) {
+-    static const char *spec;
+-    if (!spec) spec = getenv("ACWW_KEYS") ? getenv("ACWW_KEYS") : "";
+-    u32 f = (u32)host_frame(), k = 0;
+-    for (const char *p = spec; *p;) {
+-        unsigned fr, n, m;
+-        if (sscanf(p, "%u:%u:%x", &fr, &n, &m) == 3 && f >= fr && f < fr + n) k |= m;
+-        p = strchr(p, ';');
+-        if (!p) break;
+-        p++;
++    static struct { unsigned frame, frames, mask; } *keys;
++    static int n = -1;
++    if (n < 0) {
++        const char *spec = getenv("ACWW_KEYS") ? getenv("ACWW_KEYS") : "";
++        int cap = 1;
++        for (const char *p = spec; *p; p++) cap += *p == ';';
++        keys = malloc(cap * sizeof *keys);
++        n = 0;
++        for (const char *p = spec; *p && keys;) {
++            unsigned fr, len, m;
++            if (sscanf(p, "%u:%u:%x", &fr, &len, &m) == 3) keys[n].frame = fr, keys[n].frames = len, keys[n++].mask = m;
++            p = strchr(p, ';');
++            if (!p) break;
++            p++;
++        }
+     }
++    u32 f = (u32)host_frame(), k = 0;
++    for (int i = 0; i < n; i++)
++        if (f >= keys[i].frame && f < keys[i].frame + keys[i].frames) k |= keys[i].mask;
+     return k;
+ }
+ 
+ // at each VBlank: publish the frame, take the input
+ void frontend_frame(void) {
++#ifdef N3DS_PORT
++    opt_frame();
++#endif
+     u16 keyinput = 0x3ff;  // KEYINPUT: released bits are 1
+     // the ARM7's button word (HW_BUTTON_XY_BUF, the system work area), OR-ed into KEYINPUT by PAD_Read: X bit 10, Y bit 11, debug bit 13
+     // (released = 1); bit 15 clear = not folded
+     u16 xy = 0x2c00;
+     if (sShm) {
+         // (not when the GPU shows them itself: they would be read back from it)
+-        if (!wdisp_presenting())
++        if (!render_presenting())
+             for (int s = 0; s < 2; s++) memcpy(sShm->pixels + s * 256 * 192, render_screen(s), 256 * 192 * 4);
+         __atomic_thread_fence(__ATOMIC_SEQ_CST);
+         sShm->frame++;
+-        frontend_backend_frame(sShm);
++        {
++            HOST_PROF(PROF_FRONT);
++            frontend_backend_frame(sShm);
++        }
+         if (sShm->quit) host_quit();
+         u32 k = sShm->keys;
+         keyinput = (u16)(~k & 0x3ff);
++        stick(sShm, k);
+         xy = (u16)(0x2000 | (~k & 0x0c00));
+     }
+     u32 sk = scripted_keys();
+     keyinput &= (u16)~(sk & 0x3ff);
+     xy &= (u16)~(sk & 0x0c00);
++#ifdef N3DS_PORT
++    {
++        u32 p = (~keyinput & 0x3ff) | (~xy & 0x0c00), hidden = p & ~opt_keys(p);
++        keyinput |= (u16)(hidden & 0x3ff);
++        xy |= (u16)(hidden & 0x0c00);
++    }
++#endif
+     *(u16 *)host_io(0x04000130) = keyinput;
+     *(volatile u16 *)&gHostSysWork.buttonXY = xy;
+ }
+diff --git a/modern/host/frontend.h b/modern/host/frontend.h
+index c351a94c..2b66a544 100644
+--- a/modern/host/frontend.h
++++ b/modern/host/frontend.h
+@@ -4,6 +4,7 @@
+ // - frontend_viewer.c (otherwise: the i386 build, which can't load the system's 64-bit SDL): the block is shared
+ //   memory and the 64-bit viewer program (modern/host/viewer) shows it;
+ // - frontend_none.c (HOST_FRONTEND_NONE: a 64-bit build without SDL2, e.g. aarch64): none, always headless.
++// - frontend_3ds.c (HOST_FRONTEND_3DS): the Nintendo 3DS's screens, buttons and sound.
+ // Plain fixed-size types: the viewer uses this header too.
+ #ifndef HOST_FRONTEND_H
+ #define HOST_FRONTEND_H
+@@ -23,7 +24,8 @@ typedef struct {
+     int32_t touch_x, touch_y;
+     uint32_t touch_down;
+     uint32_t quit;         // set by the frontend when its window closes
+-    uint32_t pad[9];
++    int16_t stick_x, stick_y;  // the 3DS's circle pad (-156..156, y up; 0 0 elsewhere)
++    uint32_t pad[8];
+     uint32_t pixels[256 * 384];  // top screen then bottom screen, 0x00RRGGBB
+     // sound: a ring of stereo frames (left, right) at ACWW_AUDIO_RATE; the game advances audio_write, the frontend
+     // audio_read (both count frames, the ring index is the count mod ACWW_AUDIO_FRAMES)
+diff --git a/modern/host/frontend_viewer.c b/modern/host/frontend_viewer.c
+index 5e81ca90..9cf1cdbd 100644
+--- a/modern/host/frontend_viewer.c
++++ b/modern/host/frontend_viewer.c
+@@ -2,7 +2,7 @@
+ // by the viewer (modern/host/viewer/viewer.c, a 64-bit SDL program: the 32-bit game process can't load the system's
+ // 64-bit SDL), which writes keys and the touch position back. Started here unless there is no display or it can't be
+ // found. The 64-bit builds use frontend_sdl.c instead (HOST_FRONTEND_SDL), or frontend_none.c without SDL2.
+-#if !HOST_FRONTEND_SDL && !HOST_FRONTEND_NONE
++#if !HOST_FRONTEND_SDL && !HOST_FRONTEND_NONE && !HOST_FRONTEND_3DS
+ 
+ #define _GNU_SOURCE
+ #include <fcntl.h>
+diff --git a/modern/host/plat.h b/modern/host/plat.h
+index 99851ba2..40d60eba 100644
+--- a/modern/host/plat.h
++++ b/modern/host/plat.h
+@@ -10,10 +10,20 @@
+ #include <stdint.h>
+ #include <time.h>
+ 
++// ---- called first in main: what the platform sets up before anything else (the 3DS: the options from a file,
++// the log); nothing elsewhere
++void host_plat_init(void);
++
+ // ---- time
+ uint64_t host_plat_time_ns(void);           // a monotonic clock in nanoseconds (any epoch)
+ void host_plat_sleep_until_ns(uint64_t t);  // sleep until host_plat_time_ns() >= t
+ void host_plat_sleep_ms(unsigned ms);
++uint64_t host_plat_ticks(void);  // the 3DS's system tick (268 MHz) as it is, no conversion; only plat_3ds.c has it
++// the 3DS's CPU counters (plat_3ds.c only): counting two events from now (0 if they can't be reached); stopped and
++// read: the cycles and the two events' counts
++int host_plat_pmu_start(int event0, int event1);
++void host_plat_pmu_stop(uint32_t count[3]);
++void host_plat_log_write(void);  // (the 3DS port: the log's lines buffered so far to the SD card)
+ // the local (wall-clock) time now, broken down as localtime_r would; 0 if it isn't known
+ int host_plat_localtime(struct tm *out);
+ 
+@@ -23,6 +33,10 @@ void host_plat_restart(char **argv);
+ 
+ // ---- threads: a detached background thread (the watchdog); 0 if it couldn't be started
+ int host_plat_thread_start(void (*fn)(void *), void *arg);
++// a thread that runs while the game's thread is busy (ACWW_FPS's sampler): on another core, or where there is only
++// one, at a higher priority; 0 if it couldn't be started. core1 (the 3DS; elsewhere ignored): 1 the system core
++// (core 1) tried first, before the New 3DS's core 2; 2 the game's core at once
++int host_plat_sampler_start(void (*fn)(void *), void *arg, int core1);
+ 
+ // ---- memory
+ // A stack of n bytes (rounded up to whole pages) for a coroutine (coro.h), with an inaccessible guard page below it
+diff --git a/modern/host/plat_posix.c b/modern/host/plat_posix.c
+index b629667f..d6b2310e 100644
+--- a/modern/host/plat_posix.c
++++ b/modern/host/plat_posix.c
+@@ -16,6 +16,8 @@
+ 
+ #include "plat.h"
+ 
++void host_plat_init(void) {}
++
+ uint64_t host_plat_time_ns(void) {
+     struct timespec t;
+     clock_gettime(CLOCK_MONOTONIC, &t);
+@@ -78,6 +80,9 @@ int host_plat_thread_start(void (*fn)(void *), void *arg) {
+     return 1;
+ }
+ 
++// (the system shares the cores between threads by itself)
++int host_plat_sampler_start(void (*fn)(void *), void *arg, int core1) { (void)core1; return host_plat_thread_start(fn, arg); }
++
+ static size_t page_size(void) {
+     static size_t page;
+     if (!page) page = (size_t)sysconf(_SC_PAGESIZE);
+diff --git a/modern/host/plat_win32.c b/modern/host/plat_win32.c
+index 6fdc7de7..0af8a68d 100644
+--- a/modern/host/plat_win32.c
++++ b/modern/host/plat_win32.c
+@@ -55,6 +55,8 @@ static DWORD WINAPI thread_main(LPVOID p) {
+     s.fn(s.arg);
+     return 0;
+ }
++void host_plat_init(void) {}
++
+ void host_plat_restart(char **argv) {
+     char path[MAX_PATH];
+     if (!GetModuleFileNameA(NULL, path, sizeof path)) return;
+@@ -72,6 +74,9 @@ int host_plat_thread_start(void (*fn)(void *), void *arg) {
+     return 1;
+ }
+ 
++// (the system shares the cores between threads by itself)
++int host_plat_sampler_start(void (*fn)(void *), void *arg, int core1) { (void)core1; return host_plat_thread_start(fn, arg); }
++
+ static size_t page_size(void) {
+     static size_t page;
+     if (!page) {

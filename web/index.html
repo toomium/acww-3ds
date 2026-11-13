@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Animal Crossing: Wild World 3DS: web builder</title>
+  <link rel="stylesheet" href="css/site.css">
+</head>
+<body>
+<main>
+  <h1>Animal Crossing: Wild World 3DS</h1>
+  <p class="lead">Make the SD card's files from your own cartridge dump. Everything happens in your browser:
+    <strong>your ROM is never uploaded</strong>.</p>
+
+  <section>
+    <h2>1. Your ROM</h2>
+    <p>Your own dump of Animal Crossing: Wild World (USA, Rev 1), as a <code>.nds</code> file.</p>
+    <input type="file" id="rom" accept=".nds">
+    <p id="rom-status" class="status"></p>
+  </section>
+
+  <section>
+    <h2>2. The program</h2>
+    <p id="program-status" class="status">Looking for this site's build…</p>
+    <p id="program-own" hidden>This site carries no build. Build <code>acww.3dsx</code> yourself (the repository's
+      README says how) and choose it here: <input type="file" id="program" accept=".3dsx"></p>
+  </section>
+
+  <section>
+    <h2>3. Build</h2>
+    <label id="cia-row" hidden><input type="checkbox" id="cia" checked> HOME Menu version too
+      (<code>cias/acww.cia</code>: install it once with FBI; it opens the game from the SD card, and gets its icon from your ROM)</label>
+    <button id="build" disabled>Build the ZIP</button>
+    <p id="build-status" class="status"></p>
+    <p>Unpack the ZIP onto the root of the SD card: it holds the folder <code>3ds/acww/</code> with
+      <code>acww.3dsx</code> and <code>game.pak</code> (your ROM's files, without the game's code),
+      and <code>cias/acww.cia</code> if you chose the HOME Menu version. The settings are on the options page in the
+      game's pause menu.
+      Start the game from the Homebrew Launcher. Sound needs the 3DS's DSP firmware at
+      <code>sd:/3ds/dspfirm.cdc</code>, dumped from your own console.</p>
+    <p class="warn">Don't share the ZIP: it holds your cartridge's data and the game's code.</p>
+  </section>
+
+  <footer>
+    <p id="release"></p>
+    <p>An unofficial fan project, not affiliated with or endorsed by Nintendo. Animal Crossing is a trademark of
+      Nintendo.</p>
+  </footer>
+</main>
+<script type="module" src="js/app.mjs"></script>
+</body>
+</html>

@@ -1,0 +1,1149 @@
+From: acww-3ds export <noreply@invalid>
+Subject: [PATCH] The 3D geometry engine and rasteriser
+
+Changes 5 files of the decompilation for the 3DS port (area: renderer-3d).
+Made by tools/export_from_fork.py; do not edit by hand.
+
+diff --git a/modern/host/gpu3d/gpu3d.h b/modern/host/gpu3d/gpu3d.h
+index a58606e5..197e2e46 100644
+--- a/modern/host/gpu3d/gpu3d.h
++++ b/modern/host/gpu3d/gpu3d.h
+@@ -30,6 +30,7 @@ void gpu3d_reset(void);
+ void gpu3d_write8(uint32_t addr, uint8_t value);
+ void gpu3d_write16(uint32_t addr, uint16_t value);
+ void gpu3d_write32(uint32_t addr, uint32_t value);
++void gpu3d_write32_n(uint32_t addr, const uint32_t *value, uint32_t n);  // n words to one address
+ // the 3D engine's status and results: RDLINES_COUNT (0x04000320), GXSTAT, RAM_COUNT, the position and vector test
+ // results, CLIPMTX_RESULT and VECMTX_RESULT (0x04000600-0x040006a3); word addresses
+ uint32_t gpu3d_read32(uint32_t addr);
+@@ -39,6 +40,18 @@ uint32_t gpu3d_read32(uint32_t addr);
+ // commands that waited for it run. `bank`: VRAM banks A-I (the texture image slots are banks A-D, the palette
+ // slots E-G as VRAMCNT maps them)
+ void gpu3d_frame(const uint8_t *const bank[9]);
++// the VRAM's mapping generation (vram.c host_vram_generation): while it stays the same, the texture image and
++// palette slots (banks the CPU can't see) keep their contents, and the rasteriser doesn't gather them again
++void gpu3d_vram_generation(uint32_t generation);
++// 0: gpu3d_frame runs the geometry engine's frame but doesn't draw the picture (a frame the screens skip)
++void gpu3d_set_raster(int on);
++// The wide view (the 3DS's ACWW_WIDE=1, an experiment): polygons kept beyond the DS's screen, clipped at a picture of
++// (256 + 2 * GPU3D_WIDE_X) x (192 + 2 * GPU3D_WIDE_Y) with the DS's in its middle; their screen positions (hx, hy)
++// then not wrapped (negative in the margins). Only for a renderer that draws them there (gpu3d_pica.c's).
++enum { GPU3D_WIDE_X = 72, GPU3D_WIDE_Y = 24 };
++int gpu3d_wide_wanted(void);  // ACWW_WIDE set
++void gpu3d_set_wide(int on);
++int gpu3d_wide(void);
+ // the picture the frame shows: 192 lines of 256 pixels, red bits 0-5, green 8-13, blue 16-21, alpha bits 24-28
+ // (0-31; 0: no pixel), before BG0HOFS's scroll (the 2D renderer's BG0 input)
+ const uint32_t *gpu3d_lines(void);
+@@ -46,6 +59,12 @@ const uint32_t *gpu3d_lines(void);
+ // given (a WGPUDevice and WGPUQueue) at `scale` times the DS's resolution; readback: gpu3d_lines has the picture
+ // (read back every frame, at scale 1), else only gpu3d_wgpu_picture. 0 if this build can't
+ int gpu3d_use_wgpu(void *device, void *queue, int scale, int readback);
++// the polygons drawn by the 3DS's GPU (gpu3d_pica.c) into the rasteriser's buffers; 0 if this build can't
++int gpu3d_use_pica(void);
++// 1: the pictures drawn for the 3DS GPU's compositing (pica_display.c) when they can be, not read back; the last
++// such picture (a C3D_Tex), NULL when the last one was read back into the frame buffer (gpu3d_lines)
++void gpu3d_pica_direct(int on);
++void *gpu3d_pica_picture(void);
+ // the picture the frame shows, on the GPU: a WGPUTextureView of an R32Uint texture of 256 x 192 times the scale, in
+ // gpu3d_lines' format
+ void *gpu3d_wgpu_picture(void);
+diff --git a/modern/host/gpu3d/gpu3d_geom.c b/modern/host/gpu3d/gpu3d_geom.c
+index 112008bb..003c1571 100644
+--- a/modern/host/gpu3d/gpu3d_geom.c
++++ b/modern/host/gpu3d/gpu3d_geom.c
+@@ -8,6 +8,10 @@
+ #include <string.h>
+ 
+ #include "gpu3d_internal.h"
++#include "../prof.h"
++#ifdef N3DS_PORT
++#include "../plat.h"
++#endif
+ 
+ // ---- state
+ static int sGeomOn, sRenderOn;          // POWCNT1 bits 3 and 2
+@@ -34,27 +38,54 @@ static s16 sLightDir[4][3];
+ static u32 sLightParam[4]; static s32 sLightVec[4][9];  // (diagnostics)
+ static u8 sLightColor[4][3];
+ static u8 sDiffuse[3], sAmbient[3], sSpecular[3], sEmission[3];
++static u32 sLightGen;  // bumped when the material, a light's colour or the lights on change (lighting's products)
+ static int sShininessOn;
+ static u8 sShininess[128];
+ static u32 sPolyAttr, sCurPolyAttr, sTexParam, sTexPal;
+ static u32 sViewport[6];                // x1, y1 (from the top), x2, y2, width, height
+ static int sPolyType;                   // BEGIN_VTXS: 0 triangles, 1 quads, 2 triangle strip, 3 quad strip
+ static int sInBegin;
+-static G3Vertex sTemp[4];               // the vertices of the polygon being set up
++static G3Vertex sTempBuf[4];            // the vertices of the polygon being set up, in the order of sTemp (a strip's
++static G3Vertex *sTemp[4] = {&sTempBuf[0], &sTempBuf[1], &sTempBuf[2], &sTempBuf[3]};  // next polygon: turned)
+ static int sVtxCount, sVtxInPoly, sStripPolys;
+ static G3Vertex *sStripRam[2];          // a strip's last two vertices in vertex RAM
+ static int sStripValid;                 // ... if the next polygon can share them
+ static s32 sPosResult[4];
+ static s16 sVecResult[3];
+ 
+-// the two banks of vertex and polygon RAM: one filled by the geometry engine, one drawn
+-static G3Vertex sVertexRam[2][MAX_VERTICES];
+-static G3Polygon sPolyRam[2][MAX_POLYGONS];
++// the two banks of vertex and polygon RAM: one filled by the geometry engine, one drawn (the port: the GPU's
++// vertex lists instead, gpu3d_pica.c)
++#ifdef N3DS_PORT
++enum { RAM_VERTICES = 1, RAM_POLYGONS = 1 };
++#else
++enum { RAM_VERTICES = MAX_VERTICES, RAM_POLYGONS = MAX_POLYGONS };
++#endif
++static G3Vertex sVertexRam[2][RAM_VERTICES];
++static G3Polygon sPolyRam[2][RAM_POLYGONS];
+ static int sBank;
+ static int sNumVerts, sNumPolys, sNumOpaque;
+ static int sRamOverflow;
+ G3RenderState gG3Render;
+ const uint8_t *const *gG3Banks;
++u32 gG3VramGeneration = ~0u;
++u32 gG3Swaps;
++void gpu3d_vram_generation(uint32_t generation) { gG3VramGeneration = generation; }
++static int sRaster = 1;
++void gpu3d_set_raster(int on) { sRaster = on; }
++// the wide view: the x and y clip planes at +-num/den w (1/1: the DS's)
++static int sWide;
++static s64 sClipNum[3] = {1, 1, 1}, sClipDen[3] = {1, 1, 1};
++#ifdef N3DS_PORT  // (the enhanced port: on unless ACWW_WIDE=0)
++int gpu3d_wide_wanted(void) { return !getenv("ACWW_WIDE") || atoi(getenv("ACWW_WIDE")); }
++#else
++int gpu3d_wide_wanted(void) { return getenv("ACWW_WIDE") && atoi(getenv("ACWW_WIDE")); }
++#endif
++void gpu3d_set_wide(int on) {
++    sWide = on;
++    sClipNum[0] = on ? 128 + GPU3D_WIDE_X : 1, sClipDen[0] = on ? 128 : 1;
++    sClipNum[1] = on ? 96 + GPU3D_WIDE_Y : 1, sClipDen[1] = on ? 96 : 1;
++}
++int gpu3d_wide(void) { return sWide; }
+ 
+ // ---- feature census
+ static u64 sFeatureFrame[F_COUNT];
+@@ -63,12 +94,31 @@ static int sFeaturesOn = -1;
+ void g3_feature(int id) {
+     if (sFeaturesOn && !sFeatureFrame[id]) sFeatureFrame[id] = sFrame + 1;
+ }
++// (the check inline: the census is mostly off, and some features are noted for every vertex)
++#ifdef N3DS_PORT  // (the port: no census, a check less in every command, vertex and polygon)
++#define g3_feature(id) ((void)0)
++#else
++#define g3_feature(id) (sFeaturesOn ? g3_feature(id) : (void)0)
++#endif
++
++// a 64-bit division as C's, in 32 bits when both fit (the same quotient: 64-bit divisions are many times slower on
++// the 3DS's CPU, which has no divide instruction at all)
++static inline s64 div64(s64 a, s64 b) {
++    if (a == (s32)a && b == (s32)b && b != -1) return (s32)a / (s32)b;
++    return a / b;
++}
+ 
+ // ---- the command FIFO: a 4-entry pipe in front of a 256-entry FIFO (GXSTAT counts the FIFO's entries)
+ typedef struct { u8 cmd; u32 param; } Entry;
+ static Entry sPipe[4], sFifo[256];
+ static int sPipeHead, sPipeN, sFifoHead, sFifoN;
+ static int sPushPopQueued, sTestQueued;
++#ifdef N3DS_PORT
++// ACWW_G3D_TICKS=1: the system ticks spent in the writes to the GX FIFO, and what went through, printed every 300 frames
++static int sTicksOn = -1;
++static u64 sTickSum, sTickWords, sTickVerts, sTickNormals;
++static int sBenchSkip;  // (ACWW_G3D_BENCH's runs with a part left out: 1 the GPU's list, 2 lighting, 4 polygons, 8 vertices)
++#endif
+ static int sFlushPending;               // SWAP_BUFFERS waits for the frame's end
+ static u32 sFlushParam;
+ 
+@@ -84,8 +134,14 @@ static int is_command(u8 c) {
+            c == 0x41 || c == 0x50 || c == 0x60 || (c >= 0x70 && c <= 0x72);
+ }
+ 
++static void exec_entry(Entry e);
+ static void fifo_put(u8 cmd, u32 param) {
+     Entry e = {cmd, param};
++    // nothing queued and nothing holding it back: run at once, as the drain after the write (gpu3d_write32) would
++    if (!sPipeN && !sFifoN && sGeomOn && !sFlushPending) {
++        exec_entry(e);
++        return;
++    }
+     if (cmd == 0x11 || cmd == 0x12) sPushPopQueued++;
+     if (cmd >= 0x70 && cmd <= 0x72) sTestQueued++;
+     if (sFifoN == 0 && sPipeN < 4) {
+@@ -267,11 +323,18 @@ static void mtx_trans(Mtx *cur, const s32 *p) {
+     for (int j = 0; j < 4; j++)
+         cur->m[12 + j] += (s32)(((s64)p[0] * cur->m[j] + (s64)p[1] * cur->m[4 + j] + (s64)p[2] * cur->m[8 + j]) >> 12);
+ }
++#ifdef N3DS_PORT
++static int sSeg = -1;  // the id of sClip in the list being filled (g3p_matrix), -1 none yet
++#endif
+ static void update_clip(void) {
+     if (!sClipDirty) return;
++    HOST_PROF(PROF_MTX);
+     sClip = sProj;
+     mtx_mult(&sClip, &sPos);  // clip = position * projection
+     sClipDirty = 0;
++#ifdef N3DS_PORT
++    sSeg = -1;
++#endif
+ }
+ 
+ // the matrix (or matrices) a command of the current mode changes: mode 0 projection, 1 position, 2 position and
+@@ -367,7 +430,9 @@ static void light_vector(u32 p) {
+         sLightDir[l][i] = (s16)((((s64)d[0] * sVec.m[i] + (s64)d[1] * sVec.m[4 + i] + (s64)d[2] * sVec.m[8 + i]) >> 12) >> 3);
+     sLightParam[l] = p;
+     for (int i = 0; i < 9; i++) sLightVec[l][i] = sVec.m[(i / 3) * 4 + i % 3];
+-    if (getenv("ACWW_GPU3D_LIGHTLOG"))
++    static int lightLog = -1;
++    if (lightLog < 0) lightLog = getenv("ACWW_GPU3D_LIGHTLOG") != 0;
++    if (lightLog)
+         fprintf(stderr, "light %d param %08x dir %d %d %d vec %d %d %d / %d %d %d / %d %d %d -> %d %d %d\n", l, p, d[0], d[1],
+                 d[2], sVec.m[0], sVec.m[1], sVec.m[2], sVec.m[4], sVec.m[5], sVec.m[6], sVec.m[8], sVec.m[9], sVec.m[10],
+                 sLightDir[l][0], sLightDir[l][1], sLightDir[l][2]);
+@@ -389,10 +454,17 @@ void gpu3d_debug_light(int id) {
+             fprintf(stderr, "        light %d dir %d %d %d colour %d,%d,%d\n", l, r->dir[l][0], r->dir[l][1], r->dir[l][2],
+                     r->lc[l][0], r->lc[l][1], r->lc[l][2]);
+ }
++// the colours of the normals lit since the lighting's inputs last changed: the same normal under the same lights gives
++// the same colour (in town about four normals in ten: flat ground, walls). sNormGen is bumped by every command that
++// can change an input (the matrix commands for the vector matrix; the material, light and shininess commands); the
++// lights on are part of the key.
++static u32 sNormGen = 1;
++static struct { u32 normal, gen; u8 lights, color[3]; } sNormCache[256];
+ static void lighting(void) {
+     s32 n[3];
+     for (int i = 0; i < 3; i++)
+         n[i] = (s32)(((s64)sNormal[0] * sVec.m[i] + (s64)sNormal[1] * sVec.m[4 + i] + (s64)sNormal[2] * sVec.m[8 + i]) >> 12);
++#ifndef N3DS_PORT  // (diagnostics only; the port has no light records)
+     if (sFeaturesOn > 1) {
+         if (!sLightRecs) sLightRecs = calloc(65536, sizeof *sLightRecs);
+         LightRec *r = &sLightRecs[sLightRecN & 0xffff];
+@@ -411,13 +483,43 @@ static void lighting(void) {
+         memcpy(r->lparam, sLightParam, sizeof r->lparam);
+         memcpy(r->lvec, sLightVec, sizeof r->lvec);
+     }
++#endif
+     // levels from the dot products of 9-bit-fraction vectors (diffuse 9 bits, shininess 8); the colour sums kept with
+     // 14 fractional bits (each term colour * light colour / 32 * level), then cut to 5 bits
+     s32 n9[3] = {n[0] >> 3, n[1] >> 3, n[2] >> 3};
+-    s32 c[3] = {sEmission[0] << 14, sEmission[1] << 14, sEmission[2] << 14};
++    // (the terms' factors that don't depend on the normal, made again only when they change: the material and light
++    // colours' products, and the emission and ambient terms' sum; integers, the same sums in another order)
++    static u32 gen = ~0u;
++    static s32 base[3], spec[4][3], dif[4][3];
++    // (a light whose products are all 0 adds nothing: its levels aren't worked out. In town two of the four lights
++    // on are black and the specular colour is 0 everywhere.)
++    static u8 anySpec[4], anyDif[4];
++    if (gen != sLightGen) {
++        gen = sLightGen;
++        for (int k = 0; k < 3; k++) base[k] = sEmission[k] << 14;
++        for (int l = 0; l < 4; l++) {
++            anySpec[l] = anyDif[l] = 0;
++            for (int k = 0; k < 3 && (sCurPolyAttr & (1u << l)); k++) {
++                s32 lc = sLightColor[l][k];
++                spec[l][k] = sSpecular[k] * lc, dif[l][k] = sDiffuse[k] * lc;
++                base[k] += sAmbient[k] * lc << 9;
++                anySpec[l] |= spec[l][k] != 0, anyDif[l] |= dif[l][k] != 0;
++            }
++        }
++    }
++    s32 c[3] = {base[0], base[1], base[2]};
+     g3_feature(F_LIGHT);
+     for (int l = 0; l < 4; l++) {
+         if (!(sCurPolyAttr & (1u << l))) continue;
++        if (!anySpec[l]) {  // (no specular term: the shininess isn't needed)
++            if (sShininessOn) g3_feature(F_SHININESS_TABLE);
++            if (!anyDif[l]) continue;
++            const s16 *L = sLightDir[l];
++            s32 diffuse = ((-L[0] * n9[0]) >> 9) + ((-L[1] * n9[1]) >> 9) + ((-L[2] * n9[2]) >> 9);
++            if (diffuse < 0) diffuse = 0;
++            for (int k = 0; k < 3; k++) c[k] += dif[l][k] * diffuse;
++            continue;
++        }
+         const s16 *L = sLightDir[l];
+         // (the diffuse level: the products of the reversed light vector and the normal each cut to 9 fractional
+         // bits, then added; not limited above: fitted to melonDS)
+@@ -429,12 +531,8 @@ static void lighting(void) {
+         if (shine > 255) shine = 255;
+         shine = (shine * shine) >> 8;
+         if (sShininessOn) { shine = sShininess[shine >> 1]; g3_feature(F_SHININESS_TABLE); }
+-        for (int k = 0; k < 3; k++) {  // (the sums keep 14 fractional bits: fitted to melonDS)
+-            s32 lc = sLightColor[l][k];
+-            c[k] += sSpecular[k] * lc * shine << 1;
+-            c[k] += sDiffuse[k] * lc * diffuse;
+-            c[k] += sAmbient[k] * lc << 9;
+-        }
++        for (int k = 0; k < 3; k++)  // (the sums keep 14 fractional bits: fitted to melonDS)
++            c[k] += (spec[l][k] * shine << 1) + dif[l][k] * diffuse;
+     }
+     for (int k = 0; k < 3; k++) c[k] >>= 14;
+     for (int k = 0; k < 3; k++) sVtxColor[k] = (u8)(c[k] > 31 ? 31 : c[k]);
+@@ -443,8 +541,8 @@ static void lighting(void) {
+ 
+ // ---- polygons
+ static s64 floor_div(s64 a, s64 b) {
+-    s64 q = a / b;
+-    return (a % b != 0 && (a < 0) != (b < 0)) ? q - 1 : q;
++    s64 q = div64(a, b);
++    return (q * b != a && (a < 0) != (b < 0)) ? q - 1 : q;
+ }
+ // the viewport transform (GBATEK "DS 3D Viewport"): x = (x + w) * width / 2w + x1, y the same from the bottom; W and
+ // the coordinate are first shifted right once when W has more than 16 bits
+@@ -455,10 +553,13 @@ static void screen_position(G3Vertex *v) {
+     s64 ws = w >> s;
+     if (ws == 0) ws = 1;  // (a point at the eye)
+     s64 nx = ((s64)v->pos[0] + w) >> s, ny = (-(s64)v->pos[1] + w) >> s;
+-    v->x = (s32)(floor_div(nx * sViewport[4], ws * 2) + sViewport[0]) & 0x1ff;
+-    v->y = (s32)(floor_div(ny * sViewport[5], ws * 2) + sViewport[3]) & 0x1ff;  // (192 for the bottom edge: no 8-bit wrap)
+-    v->hx = (s32)(floor_div(nx * sViewport[4] * 16, ws * 2) + sViewport[0] * 16) & 0x1fff;
+-    v->hy = (s32)(floor_div(ny * sViewport[5] * 16, ws * 2) + sViewport[3] * 16) & 0x1fff;
++    // (the whole pixels from the 1/16 ones: floor(floor(16 r) / 16) = floor(r), so two divisions, not four)
++    s64 hx = floor_div(nx * sViewport[4] * 16, ws * 2) + sViewport[0] * 16;
++    s64 hy = floor_div(ny * sViewport[5] * 16, ws * 2) + sViewport[3] * 16;
++    v->x = (s32)(hx >> 4) & 0x1ff;
++    v->y = (s32)(hy >> 4) & 0x1ff;  // (192 for the bottom edge: no 8-bit wrap)
++    v->hx = sWide ? (s32)hx : (s32)hx & 0x1fff;
++    v->hy = sWide ? (s32)hy : (s32)hy & 0x1fff;
+     v->screenDone = 1;
+ }
+ 
+@@ -466,20 +567,21 @@ static void screen_position(G3Vertex *v) {
+ // interpolated from the vertex inside
+ static G3Vertex sClipBuf[2][10];
+ static void clip_interp(G3Vertex *o, const G3Vertex *in, const G3Vertex *out, int comp, int sign) {
+-    s64 din = (s64)in->pos[3] - sign * (s64)in->pos[comp];
+-    s64 dout = (s64)out->pos[3] - sign * (s64)out->pos[comp];
++    s64 num = sClipNum[comp], dn = sClipDen[comp];  // (the plane c = sign num/dn w; the DS's: 1/1)
++    s64 din = num * in->pos[3] - sign * dn * in->pos[comp];
++    s64 dout = num * out->pos[3] - sign * dn * out->pos[comp];
+     s64 den = din - dout;
+     // from the vertex outside towards the one inside, truncated towards zero (dout <= 0 < din: -dout / den >= 0)
+-#define LERP(a, b) ((s32)((b) + (((s64)(a) - (b)) * -dout) / den))
++#define LERP(a, b) ((s32)((b) + div64(((s64)(a) - (b)) * -dout, den)))
+     for (int i = 0; i < 4; i++) o->pos[i] = LERP(in->pos[i], out->pos[i]);
+-    o->pos[comp] = sign * o->pos[3];
++    o->pos[comp] = sign * (s32)(num * o->pos[3] / dn);
+     {   // (the 5-bit colours from the vertex inside, rounded up; when that vertex is the crossing of the same edge
+         // with this axis's other plane, from the edge's far end instead: fitted to melonDS)
+         const s32 *ic = in->color;
+         s64 cdin = din, cden = den;
+         if (in->farAxis == comp + 1) {
+             ic = in->farColor;
+-            cdin = (s64)in->farPos[3] - sign * (s64)in->farPos[comp];
++            cdin = num * in->farPos[3] - sign * dn * in->farPos[comp];
+             cden = cdin - dout;
+         }
+         for (int i = 0; i < 3; i++) {  // (from the larger colour towards the smaller by a factor rounded up to 16
+@@ -487,7 +589,7 @@ static void clip_interp(G3Vertex *o, const G3Vertex *in, const G3Vertex *out, in
+             s64 a = ic[i] >> 4, b = out->color[i] >> 4, base, diff, n;
+             if (a >= b) base = a, diff = a - b, n = cdin;
+             else base = b, diff = b - a, n = cden - cdin;  // (towards the inside vertex: -dout)
+-            s64 t = (n * 65536 + cden - 1) / cden;
++            s64 t = div64(n * 65536 + cden - 1, cden);
+             s64 v = base * 65536 - diff * t;
+             s32 c = (s32)(-((-v) >> 16));
+             o->color[i] = c ? c << 4 | 0xf : 0;
+@@ -506,7 +608,8 @@ static void clip_interp(G3Vertex *o, const G3Vertex *in, const G3Vertex *out, in
+     o->screenDone = 0;
+ }
+ static int inside(const G3Vertex *v, int comp, int sign) {
+-    return sign > 0 ? v->pos[comp] <= v->pos[3] : v->pos[comp] >= -v->pos[3];
++    s64 c = sClipDen[comp] * v->pos[comp], w = sClipNum[comp] * v->pos[3];
++    return sign > 0 ? c <= w : c >= -w;
+ }
+ static int clip_plane(G3Vertex *dst, const G3Vertex *src, int n, int comp, int sign) {
+     int m = 0;
+@@ -520,22 +623,24 @@ static int clip_plane(G3Vertex *dst, const G3Vertex *src, int n, int comp, int s
+     }
+     return m;
+ }
+-// returns the number of vertices left in *out (0: nothing visible); *clipped if any plane cut the polygon
+-static int clip_polygon(G3Vertex *in, int n, G3Vertex **out, int farClip, int *clipped) {
+-    G3Vertex *a = sClipBuf[0], *b = sClipBuf[1];
+-    memcpy(a, in, n * sizeof *a);
++// returns the number of vertices left in *out (0: nothing visible; *out NULL: the polygon as it came, no plane cut
++// it); *clipped if any plane cut it or it crosses the far plane. (The vertices are copied only when a plane cuts.)
++static int clip_polygon(G3Vertex *const *in, int n, G3Vertex **out, int farClip, int *clipped) {
++    G3Vertex *a = 0, *b = sClipBuf[1];
+     *clipped = 0;
++    *out = 0;
+     // the far plane: polygons crossing it are hidden unless attr bit 12
+     for (int i = 0; i < n; i++)
+-        if (a[i].pos[2] > a[i].pos[3]) {
++        if (in[i]->pos[2] > in[i]->pos[3]) {
+             *clipped = 1;
+             if (!farClip) { g3_feature(F_FARCLIP_HIDE); sFarHidden = 1; return 0; }
+         }
+     static int kPlanes[6][2] = {{2, 1}, {2, -1}, {1, 1}, {1, -1}, {0, 1}, {0, -1}};  // (z, then y, then x)
+     {   // (experiment: ACWW_GPU3D_CLIPORDER=zZxXyY, lower case the far / right / top plane)
+-        static int init;
+-        const char *o = getenv("ACWW_GPU3D_CLIPORDER");
+-        if (!init++ && o && strlen(o) == 6)
++        static int init;  // (read once: getenv here, for every clipped polygon, was much of the clipping's time)
++        const char *o = init ? 0 : getenv("ACWW_GPU3D_CLIPORDER");
++        init = 1;
++        if (o && strlen(o) == 6)
+             for (int i = 0; i < 6; i++) {
+                 char c = o[i];
+                 kPlanes[i][0] = (c | 0x20) == 'x' ? 0 : (c | 0x20) == 'y' ? 1 : 2;
+@@ -545,9 +650,13 @@ static int clip_polygon(G3Vertex *in, int n, G3Vertex **out, int farClip, int *c
+     for (int p = 0; p < 6; p++) {
+         int comp = kPlanes[p][0], sign = kPlanes[p][1];
+         int all = 1;
+-        for (int i = 0; i < n; i++) if (!inside(&a[i], comp, sign)) { all = 0; break; }
++        for (int i = 0; i < n; i++) if (!inside(a ? &a[i] : in[i], comp, sign)) { all = 0; break; }
+         if (all) continue;
+         *clipped = 1;
++        if (!a) {
++            a = sClipBuf[0];
++            for (int i = 0; i < n; i++) a[i] = *in[i];
++        }
+         n = clip_plane(b, a, n, comp, sign);
+         G3Vertex *t = a; a = b; b = t;
+         if (n == 0) return 0;
+@@ -557,30 +666,34 @@ static int clip_polygon(G3Vertex *in, int n, G3Vertex **out, int farClip, int *c
+ }
+ 
+ // (diagnostics: ACWW_GPU3D_DEBUGTEX=<texparam hex>: every polygon with that texture, its outcome and vertices)
+-static void debug_tex_poly(const char *what, const G3Vertex *v, int nv, int n) {
++static void debug_tex_poly(const char *what, G3Vertex *const *v, int nv, int n) {
+     static long want = -2;
+     if (want == -2) want = getenv("ACWW_GPU3D_DEBUGTEX") ? (long)strtoul(getenv("ACWW_GPU3D_DEBUGTEX"), 0, 16) : -1;
+     if (want < 0 || (u32)want != sTexParam) return;
+     fprintf(stderr, "debugtex frame %llu %s type %d n %d -> %d:", (unsigned long long)sFrame, what, sPolyType, nv, n);
+-    for (int i = 0; i < nv; i++) fprintf(stderr, " (%d %d %d %d)", v[i].pos[0], v[i].pos[1], v[i].pos[2], v[i].pos[3]);
++    for (int i = 0; i < nv; i++) fprintf(stderr, " (%d %d %d %d)", v[i]->pos[0], v[i]->pos[1], v[i]->pos[2], v[i]->pos[3]);
+     fprintf(stderr, "\n");
+ }
+ 
+ static void submit_polygon(void) {
++#ifdef N3DS_PORT
++    if (sBenchSkip & 4) return;
++#endif
++    HOST_PROF(PROF_POLY);
+     sPolyDone = 1;
+     sPolySerial++;
+     int nv = sPolyType & 1 ? 4 : 3;
+-    G3Vertex v[4];
++    G3Vertex *v[4];
+     // the vertex order of the polygon: strips reuse the previous vertices
+     if (sPolyType == 2 && (sStripPolys & 1)) { v[0] = sTemp[1]; v[1] = sTemp[0]; v[2] = sTemp[2]; }
+     else if (sPolyType == 3) { v[0] = sTemp[0]; v[1] = sTemp[1]; v[2] = sTemp[3]; v[3] = sTemp[2]; }
+-    else memcpy(v, sTemp, nv * sizeof *v);
++    else for (int i = 0; i < nv; i++) v[i] = sTemp[i];
+ 
+     // facing: the sign of the determinant of (x, y, w) of the first three vertices (clip space)
+-    s64 ax = v[1].pos[0] - v[0].pos[0], ay = v[1].pos[1] - v[0].pos[1], aw = v[1].pos[3] - v[0].pos[3];
+-    s64 bx = v[2].pos[0] - v[0].pos[0], by = v[2].pos[1] - v[0].pos[1], bw = v[2].pos[3] - v[0].pos[3];
++    s64 ax = v[1]->pos[0] - v[0]->pos[0], ay = v[1]->pos[1] - v[0]->pos[1], aw = v[1]->pos[3] - v[0]->pos[3];
++    s64 bx = v[2]->pos[0] - v[0]->pos[0], by = v[2]->pos[1] - v[0]->pos[1], bw = v[2]->pos[3] - v[0]->pos[3];
+     s64 nx = ay * bw - aw * by, ny = aw * bx - ax * bw, nw = ax * by - ay * bx;
+-    s64 dot = nx * v[0].pos[0] + ny * v[0].pos[1] + nw * v[0].pos[3];
++    s64 dot = nx * v[0]->pos[0] + ny * v[0]->pos[1] + nw * v[0]->pos[3];
+     int facing = dot >= 0;  // front: the vertices clockwise on the screen
+     u32 attr = sCurPolyAttr;
+     int culled = facing ? !(attr & 0x80) : !(attr & 0x40);
+@@ -594,6 +707,29 @@ static void submit_polygon(void) {
+         return;
+     }
+ 
++#ifdef N3DS_PORT
++    {   // the port: the polygon straight into the GPU's list (g3p_polygon), which clips it; here only the DS's
++        // far-plane rule (crossing it: hidden unless attr bit 12) and what lies wholly beyond the near or far plane
++        int far = 0, near = 0;
++        for (int i = 0; i < nv; i++) {
++            far += v[i]->pos[2] > v[i]->pos[3];
++            near += v[i]->pos[2] < -v[i]->pos[3];
++        }
++        if ((far && !(attr & 0x1000)) || far == nv || near == nv) {
++            sPolyOutcome = far ? 3 : 2;
++            return;
++        }
++        if (sNumPolys >= MAX_POLYGONS) { sPolyOutcome = 5; return; }
++        u32 alpha = attr >> 16 & 31;
++        int fmt = sTexParam >> 26 & 7;
++        if (!(sBenchSkip & 1))
++            g3p_polygon(v, nv, attr, sTexParam, sTexPal, (alpha > 0 && alpha < 31) || fmt == 1 || fmt == 6,
++                        sFlushParam >> 1 & 1);
++        sNumPolys++;
++        sNumVerts += nv;
++        return;
++    }
++#endif
+     G3Vertex *cv;
+     int clipped;
+     sFarHidden = 0;
+@@ -602,7 +738,7 @@ static void submit_polygon(void) {
+     debug_tex_poly(n ? "kept" : "clipped away", v, nv, n);
+     sPolyNOut = n;
+     sPolyClipped = clipped;
+-    { static int dbg = -1; if (dbg < 0) dbg = getenv("ACWW_GPU3D_DEBUGPOLY") ? atoi(getenv("ACWW_GPU3D_DEBUGPOLY")) : 0; if (dbg > 0) { dbg--; fprintf(stderr, "poly attr %08x n %d -> %d clipped %d:", attr, nv, n, clipped); for (int i = 0; i < nv; i++) fprintf(stderr, " (%d %d %d %d)", v[i].pos[0], v[i].pos[1], v[i].pos[2], v[i].pos[3]); fprintf(stderr, "\n"); } }
++    { static int dbg = -1; if (dbg < 0) dbg = getenv("ACWW_GPU3D_DEBUGPOLY") ? atoi(getenv("ACWW_GPU3D_DEBUGPOLY")) : 0; if (dbg > 0) { dbg--; fprintf(stderr, "poly attr %08x n %d -> %d clipped %d:", attr, nv, n, clipped); for (int i = 0; i < nv; i++) fprintf(stderr, " (%d %d %d %d)", v[i]->pos[0], v[i]->pos[1], v[i]->pos[2], v[i]->pos[3]); fprintf(stderr, "\n"); } }
+     if (clipped) g3_feature(F_CLIP);
+     // a strip's polygon hidden by the far plane still leaves a polygon of the two vertices it shares with the
+     // previous one (fitted to melonDS)
+@@ -628,7 +764,7 @@ static void submit_polygon(void) {
+         return;
+     }
+     G3Polygon *poly = &sPolyRam[sBank][sNumPolys];
+-    memset(poly, 0, sizeof *poly);
++    memset(poly, 0, offsetof(G3Polygon, orig));  // (orig, the diagnostics' copy, is read only up to norig)
+     poly->index = sNumPolys;
+     G3Vertex *ram = sVertexRam[sBank];
+     if (phantom) {  // (the two in the order the polygon has them: odd triangles newer first)
+@@ -643,7 +779,7 @@ static void submit_polygon(void) {
+         G3Vertex *at[4];
+         for (int k = 0; k < nv; k++) {
+             if (k < shared) at[k] = sStripRam[k];
+-            else { at[k] = &ram[sNumVerts++]; *at[k] = sTemp[k]; }
++            else { at[k] = &ram[sNumVerts++]; *at[k] = *sTemp[k]; }
+         }
+         for (int i = 0; i < n; i++) poly->v[i] = at[ord[i]];
+         if (strip) {
+@@ -717,8 +853,9 @@ static void submit_polygon(void) {
+             poly->z[i] = (s32)(z > 0xffffff ? 0xffffff : z);
+         }
+     }
+-    poly->norig = nv;
+-    memcpy(poly->orig, v, sizeof(G3Vertex) * nv);
++    poly->norig = gG3Diagnostics ? nv : 0;  // (the vertices before clipping: for the comparisons' reports only)
++    if (gG3Diagnostics)
++        for (int i = 0; i < nv; i++) poly->orig[i] = *v[i];
+     poly->vtop = vtop;
+     poly->vbottom = vbot;
+     poly->ytop = ytop;
+@@ -748,14 +885,28 @@ static void submit_polygon(void) {
+ }
+ 
+ static void submit_vertex(void) {
++#ifdef N3DS_PORT
++    sTickVerts++;
++#endif
+     if (!sInBegin) return;
++#ifdef N3DS_PORT
++    if (sBenchSkip & 8) return;
++#endif
++    HOST_PROF(PROF_VERTEX);
+     update_clip();
+-    G3Vertex *v = &sTemp[sVtxInPoly];
++    G3Vertex *v = sTemp[sVtxInPoly];
+     s64 x = sVtx[0], y = sVtx[1], z = sVtx[2];
+     for (int i = 0; i < 4; i++)
+         v->pos[i] = (s32)((x * sClip.m[i] + y * sClip.m[4 + i] + z * sClip.m[8 + i] + 0x1000 * (s64)sClip.m[12 + i]) >> 12);
++#ifdef N3DS_PORT
++    if (sSeg < 0) sSeg = g3p_matrix(sClip.m);
++    v->obj[0] = (s32)x, v->obj[1] = (s32)y, v->obj[2] = (s32)z, v->seg = (u16)sSeg;
++    g3p_vertex(sSeg, v->obj);
++#endif
+     for (int i = 0; i < 3; i++) v->color[i] = sVtxColor[i] ? sVtxColor[i] << 4 | 0xf : 0;
++#ifndef N3DS_PORT
+     v->dbgLight = sCurLightRec;
++#endif
+     if ((sTexParam >> 30) == 3) {  // texture coordinates from the vertex
+         for (int i = 0; i < 2; i++)
+             v->tex[i] = (s16)(((x * sTex.m[i] + y * sTex.m[4 + i] + z * sTex.m[8 + i]) >> 24) + sTexRaw[i]);
+@@ -780,8 +931,10 @@ static void submit_vertex(void) {
+         if (sVtxInPoly == 3) {
+             submit_polygon();
+             sStripPolys++;
++            G3Vertex *t = sTemp[0];  // (the next polygon shares the last two: turned, not copied)
+             sTemp[0] = sTemp[1];
+             sTemp[1] = sTemp[2];
++            sTemp[2] = t;
+             sVtxInPoly = 2;
+         }
+         break;
+@@ -789,8 +942,11 @@ static void submit_vertex(void) {
+         if (sVtxInPoly == 4) {
+             submit_polygon();
+             sStripPolys++;
++            G3Vertex *t0 = sTemp[0], *t1 = sTemp[1];
+             sTemp[0] = sTemp[2];
+             sTemp[1] = sTemp[3];
++            sTemp[2] = t0;
++            sTemp[3] = t1;
+             sVtxInPoly = 2;
+         }
+         break;
+@@ -827,8 +983,8 @@ static void box_test(const u32 *p) {
+     static const u8 kFaces[6][4] = {{0, 1, 3, 2}, {4, 5, 7, 6}, {0, 1, 5, 4}, {2, 3, 7, 6}, {0, 2, 6, 4}, {1, 3, 7, 5}};
+     int in = 0;
+     for (int f = 0; f < 6 && !in; f++) {
+-        G3Vertex face[4], *out;
+-        for (int k = 0; k < 4; k++) face[k] = c[kFaces[f][k]];
++        G3Vertex *face[4], *out;
++        for (int k = 0; k < 4; k++) face[k] = &c[kFaces[f][k]];
+         int clipped;
+         if (clip_polygon(face, 4, &out, 1, &clipped) > 0) in = 1;
+     }
+@@ -848,14 +1004,32 @@ void gpu3d_debug_history(void) {
+     }
+     fprintf(stderr, "\n");
+ }
++#ifdef N3DS_PORT
++// ACWW_G3D_BENCH, while sCmdStat: the commands outside the display lists counted, and the ticks from each one's start
++// to the next one's (so with the way to it: the block's unpacking)
++static unsigned long sCmdN[256];
++static u64 sCmdT[256], sCmdMark;
++static int sCmdStat, sCmdLast;
++#endif
+ static void execute(u8 cmd, const u32 *p) {
++#ifdef N3DS_PORT
++    if (sCmdStat) {
++        u64 t = host_plat_ticks();
++        sCmdT[sCmdLast] += t - sCmdMark, sCmdMark = t, sCmdLast = cmd;
++        sCmdN[cmd]++;
++    }
++#endif
++#ifndef N3DS_PORT  // (diagnostics: the command history and ACWW_GPU3D_CMDLOG; the port has neither)
+     {   // (diagnostics: ACWW_GPU3D_CMDLOG=<frame>: every command executed in that frame, with the texture param)
+         static long f = -2;
+         if (f == -2) f = getenv("ACWW_GPU3D_CMDLOG") ? atol(getenv("ACWW_GPU3D_CMDLOG")) : -1;
+         if (f >= 0 && sFrame == (u64)f) fprintf(stderr, "cmdlog %02x %08x tex %08x vin %d\n", cmd, p[0], sTexParam, sVtxInPoly);
+     }
+     sHist[sHistPos & 63].cmd = cmd; sHist[sHistPos & 63].p0 = p[0]; sHist[sHistPos & 63].mode = sMtxMode; sHist[sHistPos++ & 63].sp = sPosSP;
++#endif
+     g3_feature(F_CMD + (cmd & 0x7f));
++    HOST_PROF(cmd >= 0x10 && cmd <= 0x1c ? PROF_MTX : gHostProf);  // (the profile: the matrix commands apart)
++    if ((cmd >= 0x10 && cmd <= 0x1c) || (cmd >= 0x30 && cmd <= 0x34)) sNormGen++;  // (lighting's inputs: sNormCache)
+     Mtx a;
+     switch (cmd) {
+     case 0x10: sMtxMode = p[0] & 3; break;
+@@ -910,6 +1084,9 @@ static void execute(u8 cmd, const u32 *p) {
+         sCurLightRec = -1;
+         break;
+     case 0x21:
++#ifdef N3DS_PORT
++        sTickNormals++;
++#endif
+         sNormal[0] = sx10(p[0]);
+         sNormal[1] = sx10(p[0] >> 10);
+         sNormal[2] = sx10(p[0] >> 20);
+@@ -918,7 +1095,21 @@ static void execute(u8 cmd, const u32 *p) {
+                 sTexCoord[i] = (s16)((((s64)sNormal[0] * sTex.m[i] + (s64)sNormal[1] * sTex.m[4 + i] +
+                                        (s64)sNormal[2] * sTex.m[8 + i]) >> 24) + sTexRaw[i]);
+         }
+-        lighting();
++        {
++            HOST_PROF(PROF_LIGHT);
++#ifdef N3DS_PORT
++            if (sBenchSkip & 2) break;
++#endif
++            u32 normal = p[0] & 0x3fffffff;
++            typeof(sNormCache[0]) *e = &sNormCache[(normal * 2654435761u) >> 24];
++            if (e->gen == sNormGen && e->normal == normal && e->lights == (sCurPolyAttr & 15) && sFeaturesOn <= 1) {
++                memcpy(sVtxColor, e->color, 3);
++                break;
++            }
++            lighting();
++            e->gen = sNormGen, e->normal = normal, e->lights = sCurPolyAttr & 15;
++            memcpy(e->color, sVtxColor, 3);
++        }
+         break;
+     case 0x22:
+         sTexRaw[0] = (s16)p[0];
+@@ -963,6 +1154,7 @@ static void execute(u8 cmd, const u32 *p) {
+         sAmbient[0] = p[0] >> 16 & 31;
+         sAmbient[1] = p[0] >> 21 & 31;
+         sAmbient[2] = p[0] >> 26 & 31;
++        sLightGen++;
+         if (p[0] & 0x8000) {  // also the vertex colour
+             for (int i = 0; i < 3; i++) sVtxColor[i] = sDiffuse[i];
+             sCurLightRec = -1;
+@@ -976,6 +1168,7 @@ static void execute(u8 cmd, const u32 *p) {
+         sEmission[1] = p[0] >> 21 & 31;
+         sEmission[2] = p[0] >> 26 & 31;
+         sShininessOn = p[0] >> 15 & 1;
++        sLightGen++;
+         break;
+     case 0x32: light_vector(p[0]); break;
+     case 0x33: {
+@@ -983,6 +1176,7 @@ static void execute(u8 cmd, const u32 *p) {
+         sLightColor[l][0] = p[0] & 31;
+         sLightColor[l][1] = p[0] >> 5 & 31;
+         sLightColor[l][2] = p[0] >> 10 & 31;
++        sLightGen++;
+         break;
+     }
+     case 0x34:
+@@ -992,6 +1186,7 @@ static void execute(u8 cmd, const u32 *p) {
+     case 0x40:
+         sPolyType = p[0] & 3;
+         sCurPolyAttr = sPolyAttr;
++        sLightGen++;
+         sInBegin = 1;
+         sVtxInPoly = 0;
+         sStripPolys = 0;
+@@ -1010,6 +1205,9 @@ static void execute(u8 cmd, const u32 *p) {
+         sViewport[3] = (191 - (p[0] >> 24 & 0xff)) & 0xff;
+         sViewport[4] = (sViewport[2] - sViewport[0] + 1) & 0x1ff;
+         sViewport[5] = ((p[0] >> 24 & 0xff) - sViewport[1] + 1) & 0xff;
++#ifdef N3DS_PORT
++        g3p_viewport(sViewport);
++#endif
+         break;
+     case 0x70: g3_feature(F_BOX_TEST); box_test(p); break;
+     case 0x71:
+@@ -1024,6 +1222,10 @@ static void execute(u8 cmd, const u32 *p) {
+     }
+ }
+ 
++#ifdef N3DS_PORT
++#include "gpu3d_geom_list.h"
++#endif
++
+ static void exec_entry(Entry e) {
+     if (sExecCmd < 0) {
+         sExecCmd = e.cmd;
+@@ -1034,6 +1236,10 @@ static void exec_entry(Entry e) {
+     if (sExecCount >= need) {
+         u8 c = (u8)sExecCmd;
+         sExecCmd = -1;
++#ifdef N3DS_PORT  // (no busy time: GXSTAT never says busy, the game doesn't wait)
++        execute(c, sExecParams);
++        return;
++#endif
+         timing_before(c);
+         execute(c, sExecParams);
+         timing_after(c);
+@@ -1061,6 +1267,12 @@ static void do_swap(void) {
+     if (r->wbuffer) g3_feature(F_WBUFFER);
+     else if (r->npoly) g3_feature(F_ZBUFFER_POLYS);
+     if (r->manualSort) g3_feature(F_MANUAL_SORT);
++#ifdef N3DS_PORT
++    r->list = g3p_swap();
++    r->npoly = 0;
++    sNumPolys = 0;
++    sSeg = -1;  // (the new list has no matrices yet)
++#endif
+     for (int i = 0; i < sNumPolys; i++) {
+         G3Polygon *p = &sPolyRam[sBank][i];
+         if (r->manualSort && p->translucent) p->sortKey = 0x10000u;  // (translucent ones in submission order)
+@@ -1082,10 +1294,16 @@ static void do_swap(void) {
+     sNumPolys = sNumVerts = sNumOpaque = 0;
+     sStripValid = 0;
+     sFlushPending = 0;
++    gG3Swaps++;
++#ifdef N3DS_PORT
++    dl_swap();
++#endif
+ }
+ 
+ // ---- the interface
+ void gpu3d_reset(void) {
++    sLightGen++;
++    sNormGen++;
+     sGeomOn = sRenderOn = 0;
+     sDispCnt = sGxStat = 0;
+     memset(sRegs, 0, sizeof sRegs);
+@@ -1104,8 +1322,13 @@ void gpu3d_reset(void) {
+ }
+ 
+ void gpu3d_write8(uint32_t addr, uint8_t v) {
+-    if (addr >= 0x04000240 && addr < 0x04000247) gG3VramCnt[addr - 0x04000240] = v;
+-    else if (addr >= 0x04000248 && addr < 0x0400024a) gG3VramCnt[addr - 0x04000248 + 7] = v;
++    // (the array behind a barrier: the compiler would otherwise fold `array + (addr - 0x04000248 + 7)` into the constant
++    // `array - 0x04000248 + 7` plus addr, an address outside the program, which a .3dsx's relocations can't express;
++    // it did so once other code moved the array)
++    u8 *cnt = gG3VramCnt;
++    __asm__("" : "+r"(cnt));
++    if (addr >= 0x04000240 && addr < 0x04000247) cnt[addr - 0x04000240] = v;
++    else if (addr >= 0x04000248 && addr < 0x0400024a) cnt[addr - 0x04000248 + 7] = v;
+     else {
+         u16 h = addr & 1 ? (u16)(v << 8) : v;  // (not used by the host: 8-bit writes are VRAMCNT's)
+         (void)h;
+@@ -1119,7 +1342,7 @@ void gpu3d_write16(uint32_t addr, uint16_t v) {
+     else if (addr == 0x04000610) sDot1Depth = v & 0x7fff;
+     else if (addr >= 0x04000400 && addr < 0x04000600) { /* (the host writes these 32-bit) */ }
+ }
+-void gpu3d_write32(uint32_t addr, uint32_t v) {
++static void write32_impl(uint32_t addr, uint32_t v) {
+     if (addr >= 0x04000400 && addr < 0x04000600 && !sGeomOn) { g3_feature(F_GEOM_OFF_WRITE); return; }  // (dropped)
+     if (addr >= 0x04000400 && addr < 0x04000440) gxfifo_write(v);
+     else if (addr >= 0x04000440 && addr < 0x04000600) {
+@@ -1140,6 +1363,81 @@ void gpu3d_write32(uint32_t addr, uint32_t v) {
+     drain();
+ }
+ 
++static void write32_n_impl(uint32_t addr, const uint32_t *v, uint32_t n) {
++    uint32_t i = 0;
++#ifdef N3DS_PORT
++    // the port: a block for the GX FIFO decoded where it lies, each command run with its parameters in place.
++    // A block may start with the parameters of a packed word written before (the SDK's G3_* functions: the command
++    // word, then its parameters with MIi_CpuSend32; in town about 60 % of the GX FIFO's words): those commands first.
++    // The FIFO only while a swap waits (the commands then wait in it) or when a command's parameters are split
++    // between blocks: from there word by word as below.
++    if (addr == 0x04000400 && sGeomOn && !sFlushPending && sPackParamsLeft && !sPipeN && !sFifoN && sExecCmd < 0 &&
++        sPackParamsLeft == kParams[sPackCmds & 0xff] && n >= 63 && dl_try(v, n, sPackCmds))
++        i = n;  // (a display list whose command word came before the block: with it, gpu3d_geom_list.h)
++    while (addr == 0x04000400 && sGeomOn && !sFlushPending && sPackParamsLeft && !sPipeN && !sFifoN && sExecCmd < 0 &&
++           sPackParamsLeft == kParams[sPackCmds & 0xff] && i + (u32)sPackParamsLeft <= n) {
++        execute(sPackCmds & 0xff, &v[i]);
++        i += (u32)sPackParamsLeft;
++        sPackCmds >>= 8;
++        sPackLeft--;
++        pack_advance();  // (the word's next commands: one with parameters waits for them, the others queued)
++        drain();
++    }
++    if (addr == 0x04000400 && sGeomOn && !sFlushPending && !sPackParamsLeft && !sPipeN && !sFifoN && sExecCmd < 0) {
++        if (i == 0 && n >= 64 && dl_try(v, n, 0)) i = n;  // (a display list: kept and run converted, gpu3d_geom_list.h)
++        while (i < n && !sFlushPending) {
++            u32 cmds = v[i], need = 0;
++            for (u32 c = cmds; c; c >>= 8) need += kParams[c & 0xff];
++            if (i + 1 + need > n) break;
++            i++;
++            for (int k = 0; cmds; k++, cmds >>= 8) {
++                u8 c = cmds & 0xff;
++                if (sFlushPending) {  // (SWAP_BUFFERS in this word: its other commands queue behind it)
++                    sPackCmds = cmds, sPackLeft = 4 - k;
++                    pack_advance();
++                    break;
++                }
++                if (c) execute(c, &v[i]);  // (00: a NOP)
++                i += kParams[c];
++            }
++        }
++    }
++#endif
++    for (; i < n; i++) write32_impl(addr, v[i]);
++}
++
++#ifdef N3DS_PORT
++#include "gpu3d_geom_bench.h"
++#endif
++
++void gpu3d_write32(uint32_t addr, uint32_t v) {
++#ifdef N3DS_PORT
++    if (sBenchState == 1 && addr >= 0x04000400 && addr < 0x04000600) { bench_record(addr, &v, 1, 1); return; }
++    if (sTicksOn > 0 && addr >= 0x04000400 && addr < 0x04000600) {
++        u64 t = host_plat_ticks();
++        write32_impl(addr, v);
++        sTickSum += host_plat_ticks() - t;
++        sTickWords++;
++        return;
++    }
++#endif
++    write32_impl(addr, v);
++}
++
++void gpu3d_write32_n(uint32_t addr, const uint32_t *v, uint32_t n) {
++#ifdef N3DS_PORT
++    if (sBenchState == 1 && addr >= 0x04000400 && addr < 0x04000600) { bench_record(addr, v, n, 0); return; }
++    if (sTicksOn > 0 && addr >= 0x04000400 && addr < 0x04000600) {
++        u64 t = host_plat_ticks();
++        write32_n_impl(addr, v, n);
++        sTickSum += host_plat_ticks() - t;
++        sTickWords += n;
++        return;
++    }
++#endif
++    write32_n_impl(addr, v, n);
++}
++
+ static u32 gxstat(void) {
+     u32 s = sGxStat & (2u | 0x8000u | 0xc0000000u);
+     if (sTestQueued) s |= 1;
+@@ -1177,6 +1475,15 @@ uint32_t gpu3d_read32(uint32_t addr) {
+ void gpu3d_frame(const uint8_t *const bank[9]) {
+     gG3Banks = bank;
+     sFrame++;
++#ifdef N3DS_PORT
++    if (sTicksOn < 0) sTicksOn = getenv("ACWW_G3D_TICKS") ? atoi(getenv("ACWW_G3D_TICKS")) : 0;
++    if (sTicksOn > 0 && sFrame % 300 == 0) {
++        fprintf(stderr, "g3d: %llu ticks, %llu words, %llu vertices, %llu normals in 300 frames; %llu ticks a vertex\n",
++                (unsigned long long)sTickSum, (unsigned long long)sTickWords, (unsigned long long)sTickVerts,
++                (unsigned long long)sTickNormals, (unsigned long long)(sTickVerts ? sTickSum / sTickVerts : 0));
++        sTickSum = sTickWords = sTickVerts = sTickNormals = 0;
++    }
++#endif
+     sVtxPipe = sNrmPipe = sPolyPipe = sSlotCtr = 0;  // (a frame of time: the pipelines are done)
+     sSlots = 1;
+     if (!(sDispCnt & 1)) g3_feature(F_TEXTURE_OFF);
+@@ -1189,11 +1496,15 @@ void gpu3d_frame(const uint8_t *const bank[9]) {
+     if (sDispCnt & 128) g3_feature(F_FOG);
+     if (sDispCnt & 0x4000) g3_feature(F_REAR_BITMAP);
+     if (sFlushPending) {
++        g3_render_wait();  // (the list drawn from and its polygon RAM)
+         do_swap();
++#ifdef N3DS_PORT
++        bench_frame();
++#endif
+         drain();
+     }
+     if (sDispCnt & 1) {}
+-    g3_render();
++    if (sRaster) g3_render();
+ }
+ 
+ const uint32_t *gpu3d_lines(void) { return g3_frame_lines(); }
+diff --git a/modern/host/gpu3d/gpu3d_internal.h b/modern/host/gpu3d/gpu3d_internal.h
+index 8ec76558..16b34408 100644
+--- a/modern/host/gpu3d/gpu3d_internal.h
++++ b/modern/host/gpu3d/gpu3d_internal.h
+@@ -29,6 +29,10 @@ typedef struct G3Vertex {
+     s32 farPos[4], farColor[3];  // (an edge crossing both planes of an axis: the second crossing from there)
+     u8 dbgClips;      // (diagnostics: the interpolations behind it; for the last one the inside and outside
+     s32 dbgClip[8];   // colours, din, dout)
++#ifdef N3DS_PORT
++    s32 obj[3];       // the object coordinates and the list's id of their clip matrix (g3p_matrix): the picture can
++    u16 seg;          // be drawn again with other matrices (interpolation)
++#endif
+ } G3Vertex;
+ 
+ typedef struct G3Polygon {
+@@ -60,14 +64,28 @@ typedef struct G3RenderState {
+     u32 fogColor;
+     u16 fogOffset;
+     u8 fogTable[32];
++    int list;  // the port (N3DS_PORT): the GPU's vertex list of these polygons (g3p_swap); poly is empty
+ } G3RenderState;
+ 
+ extern G3RenderState gG3Render;
+ extern const uint8_t *const *gG3Banks;  // VRAM banks A-I (gpu3d_frame)
+ extern u8 gG3VramCnt[9];
++extern int gG3Diagnostics;  // (gpu3d_set_diagnostics: the comparisons' reports want more kept)
++extern u32 gG3VramGeneration;  // (gpu3d_vram_generation)
++#ifdef N3DS_PORT
++// the texture uploads since the last call (vram.c): bank, offset, bytes; -1 none known (take the slots in full)
++int host_vram_take_uploads(unsigned (*out)[3], int max);
++// the parts of the flat texture images (gpu3d_tex.h) the last setup changed, for gpu3d_pica.c: an offset into the
++// image slots (bit 31 clear) or the palette slots (set), and bytes; gG3TexParts -1: all
++enum { G3_TEX_PARTS = 64 };
++extern int gG3TexParts;
++extern u32 gG3TexPart[G3_TEX_PARTS][2];
++#endif
++extern u32 gG3Swaps;  // SWAP_BUFFERS done: gG3Render is set then
+ 
+ // gpu3d_raster.c
+ void g3_render(void);                    // gG3Render into the frame buffer
++void g3_render_wait(void);               // until the picture being drawn from gG3Render is done (the 3DS)
+ const u32 *g3_frame_lines(void);
+ int g3_raster_pixel_polygon(int x, int y);  // index into gG3Render.poly, -1 none
+ void g3_raster_diagnostics(int on);
+@@ -77,6 +95,52 @@ int g3w_init(void *device, void *queue, int scale);
+ void g3w_render(const G3RenderState *r, const u8 *img, const u8 *pal, u32 *out);
+ void *g3w_picture(void);
+ 
++// gpu3d_pica.c (the 3DS; elsewhere g3p_init fails): the polygons drawn by the 3DS's GPU into the rasteriser's
++// colour, depth and flag buffers (gpu3d_raster.c's formats; flags: bit 0 fog)
++int g3p_init(void);
++// (texChanged: the slots may have changed since the last frame; color NULL: drawn for the GPU's compositing into a
++// texture, g3p_picture, nothing read back)
++void g3p_render(const G3RenderState *r, const u8 *img, const u8 *pal, int texChanged, u32 *color, u32 *depth, u8 *flags);
++void *g3p_picture(void);  // the last picture drawn for the GPU's compositing (a C3D_Tex), NULL none
++void g3p_wait(void);  // until a picture being drawn (by the GPU thread) is done: before its list or textures change
++void g3_texture_rgba(u32 texparam, u32 texpal, u32 *out);  // (gpu3d_raster.c)
++// the port (N3DS_PORT): the geometry engine's polygons go straight into the GPU's
++// vertex list, in the DS screen's clip space (the viewport applied, not clipped: the GPU clips), while the list
++// before is drawn
++void g3p_viewport(const u32 vp[6]);  // VIEWPORT: x1, y1 (from the top), x2, y2, width, height (gpu3d_geom.c's sViewport)
++void g3p_polygon(G3Vertex *const *v, int n, u32 attr, u32 texparam, u32 texpal, int translucent, int wbuffer);
++void g3p_bench_reset(void);  // (ACWW_G3D_BENCH, gpu3d_geom.c)
++int g3p_swap(void);  // the list filled since the last swap handed over (its number, G3RenderState.list), a new one begun
++#ifdef N3DS_PORT
++// the display lists run converted (gpu3d_geom_list.h): the vertices of a list made at once, then the polygons from them
++typedef struct { s32 pos[4]; s32 color[3]; s16 tex[2]; s16 obj[3]; u16 seg; } G3LVertex;  // (G3Vertex's used fields)
++typedef struct { int nv, npoly, nbatch, lastCount; } G3pMark;  // the list being filled's counts (g3p_list_mark)
++int g3p_list_begin(u32 n);  // room for n vertices (g3p_list_vertices): 0 if there is none
++void g3p_list_vertices(u32 first, const G3LVertex *v, u32 n, u32 attr, int wbuffer);  // as g3p_polygon makes them
++void g3p_list_polygon(const u32 *idx, int n, u32 attr, u32 texparam, u32 texpal, int translucent, int wbuffer);
++void g3p_list_mark(G3pMark *m);  // (ACWW_G3D_DLCHECK) the counts, to be put back with g3p_list_reset
++void g3p_list_reset(const G3pMark *m);
++void *g3p_list_since(const G3pMark *m, int *nv, int *nb);  // a copy of what was added since m (free it)
++int g3p_list_diff(const void *a, int nva, int nba, const void *b, int nvb, int nbb);  // -1 same, else what differs
++// the display lists drawn by the GPU (ACWW_G3D_GPU): a list's vertices as it gives them, kept in linear memory, and
++// a draw of some of them with what the vertex shader needs (gpu3d_pica.v.pica)
++typedef struct { s16 pos[4], cn[4], tc[2]; } G3GVertex;  // object coordinates and 1; the normal or the colour (6 bits) and 1
++typedef struct {
++    float clip[16];           // the clip matrix's rows for those coordinates (the DS's clip coordinates / 4096)
++    float cscale[4], base[4];  // the colour: cscale * cn + base + the lights' (base's w: the alpha for a lit draw)
++    float ldir[4][3], lcol[4][3];
++    float tex[2][2];          // the DS's texture matrix for s and t: the scale, and the shift in raw units
++} G3GDraw;
++int g3p_gpu_store(const G3GVertex *v, u32 nv, u16 *idx, u32 ni, u32 *first);  // idx from 0: 0 if there is no room
++void g3p_gpu_more(u32 count);
++int g3p_gpu_draw(u32 first, u32 count, const G3GDraw *d, u32 attr, u32 texparam, u32 texpal, int translucent, int wbuffer);
++int g3p_recorded(void);  // whether the list being filled keeps its matrices and vertices' object coordinates
++int g3p_matrix(const s32 clip[16]);  // a clip matrix (20.12) the list being filled uses: its id (G3Vertex.seg)
++void g3p_vertex(int seg, const s32 obj[3]);  // a vertex submitted under it (culled or not): what identifies it
++// each frame, before g3_render's drawing: whether a picture between the game's is due (the same list again)
++int g3p_between(const G3RenderState *r);
++#endif
++
+ // feature census (gpu3d_geom.c)
+ void g3_feature(int id);
+ enum {
+diff --git a/modern/host/gpu3d/gpu3d_raster.c b/modern/host/gpu3d/gpu3d_raster.c
+index 8e0c350a..02862b64 100644
+--- a/modern/host/gpu3d/gpu3d_raster.c
++++ b/modern/host/gpu3d/gpu3d_raster.c
+@@ -510,11 +510,14 @@ static void aa_pass(void) {
+         if (sCov[i] < 31) sColor[i] = aa_resolve(sColor[i], sColor2[i], sCov[i]);
+ }
+ 
++// (a division by 2^k as C's, truncating towards zero, with shifts: the 3DS's CPU has no divide instruction)
++static inline s32 div_pow2(s32 v, int k) { return v >= 0 ? v >> k : -(-v >> k); }
+ static void fog_pass(void) {
+     const G3RenderState *r = sR;
+     if (!(r->dispcnt & 0x80) || getenv("ACWW_GPU3D_NOFOG")) return;  // (NOFOG: diagnostics)
+     int shift = r->dispcnt >> 8 & 15;
+     s32 step = shift <= 10 ? 0x400 >> shift : 0;
++    int k = 10 - shift;  // (step = 2^k)
+     u32 fc = r->fogColor;
+     u32 fr = rgb5_to_6(fc & 31), fgc = rgb5_to_6(fc >> 5 & 31), fb = rgb5_to_6(fc >> 10 & 31), fa = fc >> 16 & 31;
+     for (int i = 0; i < W * H; i++) {
+@@ -524,11 +527,11 @@ static void fog_pass(void) {
+         s32 b0 = r->fogOffset + step;
+         if (z < b0 || !step) d = z < b0 ? r->fogTable[0] : r->fogTable[31];
+         else {
+-            s32 n = (z - b0) / step;
++            s32 n = (z - b0) >> k;  // (z >= b0)
+             if (n >= 31) d = r->fogTable[31];
+             else {
+                 s32 frac = (z - b0) - n * step;
+-                d = r->fogTable[n] + (r->fogTable[n + 1] - r->fogTable[n]) * frac / step;
++                d = r->fogTable[n] + div_pow2((r->fogTable[n + 1] - r->fogTable[n]) * frac, k);
+             }
+         }
+         if (d >= 127) d = 128;
+@@ -546,7 +549,7 @@ static void fog_pass(void) {
+ }
+ 
+ // (diagnostics: ACWW_GPU3D_TIMING=1: the rasteriser's time per frame, printed every 1000 frames)
+-#include <time.h>
++#include "../plat.h"  // (host_plat_time_ns: the C library's timespec_get isn't everywhere, e.g. newlib)
+ static double sRenderNs, sRenderMax;
+ static long sRenderFrames;
+ static void timing_report(void) {
+@@ -554,6 +557,29 @@ static void timing_report(void) {
+         fprintf(stderr, "gpu3d: rasteriser %.3f ms a frame on average, %.3f ms at most, %ld frames\n",
+                 sRenderNs / sRenderFrames / 1e6, sRenderMax / 1e6, sRenderFrames);
+ }
++// the texture of texparam / texpal (its size from texparam), row by row, as the 3DS GPU's RGBA8 (r << 24 | g << 16 |
++// b << 8 | a): gpu3d_pica.c decodes each texture once with the same texel fetch as this rasteriser
++void g3_texture_rgba(u32 texparam, u32 texpal, u32 *out) {
++    int w = 8 << (texparam >> 20 & 7), h = 8 << (texparam >> 23 & 7);
++    for (int t = 0; t < h; t++)
++        for (int s = 0; s < w; s++) {
++            u32 c = g3_texel(texparam, texpal, s, t);
++            u32 r = c & 31, g = c >> 5 & 31, b = c >> 10 & 31, a = c >> 16 & 31;
++            *out++ = (r << 3 | r >> 2) << 24 | (g << 3 | g >> 2) << 16 | (b << 3 | b >> 2) << 8 | (a << 3 | a >> 2);
++        }
++}
++
++// ACWW_RENDERER3D=pica (the 3DS): the polygons drawn by its GPU (gpu3d_pica.c) into this rasteriser's buffers, then
++// its fog pass
++static int sPica, sPicaDirect, sPicaLastDirect;
++int gpu3d_use_pica(void) {
++    if (!g3p_init()) return 0;
++    sPica = 1;
++    return 1;
++}
++void gpu3d_pica_direct(int on) { sPicaDirect = on; }
++void *gpu3d_pica_picture(void) { return sPicaLastDirect ? g3p_picture() : 0; }
++
+ // ACWW_RENDERER3D=wgpu: the polygons drawn by the GPU (gpu3d_wgpu.c), read back into the same frame buffer or not
+ static int sWgpu, sWgpuReadback;
+ int gpu3d_use_wgpu(void *device, void *queue, int scale, int readback) {
+@@ -564,18 +590,38 @@ int gpu3d_use_wgpu(void *device, void *queue, int scale, int readback) {
+ }
+ void *gpu3d_wgpu_picture(void) { return g3w_picture(); }
+ void g3_render(void) {
++    // the picture of the last one again: nothing it is drawn from changed (gG3Render is set at a swap, the
++    // textures change with VRAMCNT: g3_tex_setup). The game swaps every third frame.
++    static u32 drawnSwaps = ~0u, drawnGeneration = ~0u;
++#ifdef N3DS_PORT  // (the port: the same list again between the game's pictures, interpolated: gpu3d_pica.c)
++    int between = sPica && g3p_between(&gG3Render) && sPicaLastDirect;
++#endif
++    if (gG3Swaps == drawnSwaps && gG3VramGeneration == drawnGeneration && gG3VramGeneration != ~0u && !sDiag) {
++#ifdef N3DS_PORT
++        if (between) g3p_render(sR, sImgFlat, sPalFlat, 0, 0, 0, 0);
++#endif
++        return;
++    }
++    drawnSwaps = gG3Swaps;
++    drawnGeneration = gG3VramGeneration;
++    g3_render_wait();  // (the textures below)
+     static int timing = -1;
+-    struct timespec t0, t1;
++    uint64_t t0 = 0;
+     if (timing < 0) {
+         timing = getenv("ACWW_GPU3D_TIMING") != 0;
+         (void)timing_report;
+     }
+-    if (timing) timespec_get(&t0, TIME_UTC);
++    if (timing) t0 = host_plat_time_ns();
+     sR = &gG3Render;
+-    g3_tex_setup();
++    int texChanged = g3_tex_setup();
+     if (sWgpu)  // (the GPU's rasteriser: gpu3d_wgpu.c)
+         g3w_render(sR, sImgFlat, sPalFlat, sWgpuReadback ? sColor : NULL);
+-    else {
++    else if (sPica) {  // (the 3DS GPU's: gpu3d_pica.c; no anti-aliasing pass, it has no coverage)
++        // (straight to the GPU's compositing unless the colour fog needs the fog pass here)
++        sPicaLastDirect = sPicaDirect && (sR->dispcnt & 0xc0) != 0x80;
++        g3p_render(sR, sImgFlat, sPalFlat, texChanged, sPicaLastDirect ? 0 : sColor, sDepth, sFlags);
++        if (!sPicaLastDirect) fog_pass();
++    } else {
+         clear_buffers();
+         sPE.p = 0;
+         for (int i = 0; i < sR->npoly; i++) draw_polygon(sR->poly[i], i);
+@@ -583,10 +629,9 @@ void g3_render(void) {
+         aa_pass();
+     }
+     sShown ^= 1;
+-    if (!sWgpu || sWgpuReadback) memcpy(sFrameBuf[sShown], sColor, sizeof sColor);
++    if ((!sWgpu || sWgpuReadback) && !(sPica && sPicaLastDirect)) memcpy(sFrameBuf[sShown], sColor, sizeof sColor);
+     if (timing) {
+-        timespec_get(&t1, TIME_UTC);
+-        double ns = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
++        double ns = (double)(host_plat_time_ns() - t0);
+         sRenderNs += ns;
+         if (ns > sRenderMax) sRenderMax = ns;
+         sRenderFrames++;
+@@ -616,4 +661,6 @@ int gpu3d_pixel_polygon(int x, int y, Gpu3dPolyInfo *info) {
+     info->translucent = p->translucent;
+     return 1;
+ }
+-void gpu3d_set_diagnostics(int on) { sDiag = on; }
++int gG3Diagnostics;
++void g3_render_wait(void) { if (sPica) g3p_wait(); }
++void gpu3d_set_diagnostics(int on) { sDiag = gG3Diagnostics = on; }
+diff --git a/modern/host/gpu3d/gpu3d_tex.h b/modern/host/gpu3d/gpu3d_tex.h
+index 3d2b5c18..ebb598ef 100644
+--- a/modern/host/gpu3d/gpu3d_tex.h
++++ b/modern/host/gpu3d/gpu3d_tex.h
+@@ -24,7 +24,25 @@ static const u32 kBankSize[9] = {0x20000, 0x20000, 0x20000, 0x20000, 0x10000, 0x
+ static u8 sImgFlat[4 * IMG_SLOT];
+ static u8 sPalFlat[8 * PAL_SLOT];
+ 
+-static void g3_tex_setup(void) {
++// returns 0, doing nothing, while the VRAM's mapping generation is the one of the last call (the slots unchanged)
++#ifdef N3DS_PORT
++#include "gpu3d_tex_uploads.h"
++#endif
++static int g3_tex_setup(void) {
++    static u32 done = ~0u;
++    if (gG3VramGeneration != ~0u && gG3VramGeneration == done) return 0;
++#ifdef N3DS_PORT
++    gG3TexParts = -1;
++    if (done != ~0u && gG3VramGeneration != ~0u && g3_tex_uploads()) {
++        done = gG3VramGeneration;
++        return 1;
++    }
++    {   // (the uploads so far are in the full copy below)
++        unsigned none[1][3];
++        host_vram_take_uploads(none, 0);
++    }
++#endif
++    done = gG3VramGeneration;
+     memset(sNImg, 0, sizeof sNImg);
+     memset(sNPal, 0, sizeof sNPal);
+     if (gG3Banks)
+@@ -55,6 +73,7 @@ static void g3_tex_setup(void) {
+             for (u32 k = 0; k < PAL_SLOT; k++) d[k] |= sPal[s][i][k];
+     }
+     (void)kBankSize;
++    return 1;
+ }
+ 
+ static inline u8 img8(u32 a) { return sImgFlat[a & 0x7ffff]; }

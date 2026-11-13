@@ -1,0 +1,911 @@
+From: acww-3ds export <noreply@invalid>
+Subject: [PATCH] The game's overlays (src/ov*)
+
+Changes 11 files of the decompilation for the 3DS port (area: game-overlays).
+Made by tools/export_from_fork.py; do not edit by hand.
+
+diff --git a/src/ov004/unk_ov004_0221e7a8.cpp b/src/ov004/unk_ov004_0221e7a8.cpp
+index 544d19b9..fb1e17c7 100644
+--- a/src/ov004/unk_ov004_0221e7a8.cpp
++++ b/src/ov004/unk_ov004_0221e7a8.cpp
+@@ -4,6 +4,7 @@
+ // mwcc-version: 1.2/base
+ // mwcc-flags: -str reuse
+ #include "types.h"
++#include "n3ds_options.h"
+ #include "room/FtrManager.h"
+ #include "sys/NNSFndArchive.h"
+ #include "gfx/VecFx32.h"
+@@ -1899,7 +1900,11 @@ extern "C" void PlayerActor_PickUpItemUpdateState(Obj *o) {
+         }
+         {
+             BOOL ok;
++#ifdef N3DS_PORT
++            if (Pocket_FindEmpty() == -1 && Pocket_FindFruitStack(&o->actionItem) == -1) {  // (or onto a fruit stack)
++#else
+             if (Pocket_FindEmpty() == -1) {
++#endif
+                 if (Item_IsFurniture(&o->actionItem) != 0) {
+                     w.b = 0xfff1;
+                     u32 r6 = Item_GetFurnitureIndex(&o->actionItem);
+diff --git a/src/ov090/unk_ov090_022918e0.cpp b/src/ov090/unk_ov090_022918e0.cpp
+index 3e30828a..c0e15516 100644
+--- a/src/ov090/unk_ov090_022918e0.cpp
++++ b/src/ov090/unk_ov090_022918e0.cpp
+@@ -33,6 +33,16 @@
+ #include "proto/main/unk_0209eb94.h"
+ #include "proto/main/unk_020b7d84.h"
+ #include "proto/ov090/unk_ov090_022918e0.h"
++#ifdef N3DS_PORT
++#include "n3ds_ui.h"
++#include "proto/main/unk_020501d4.h"
++#include "text/Unk_02050288.h"
++void N3ds_MenuTabBarStep(MenuTabBar *s);  // modern/n3ds/menu_tab_bar.cpp: the options page's turn each frame
++#define N3DS_MENU_STATE() n3ds_menu_state(1, visible, slideY, curTab)
++#define N3DS_IS_TAB(i) ((i) <= 6 || (i) == N3DS_OPT_TAB)  // (the options page: one more tab)
++#else
++#define N3DS_IS_TAB(i) ((i) <= 6)
++#endif
+ 
+ extern "C" {
+ 
+@@ -100,6 +110,13 @@ BOOL MenuTabBar::onCreate() {
+     MenuCtrl_ClearSavedSlot();
+     Snd_BeginMenuDuck();
+     MenuCtrl_SyncFromInputMode();
++#ifdef N3DS_PORT
++    {
++        GameFontDesc *fd = (GameFontDesc *)&gFontA;
++        n3ds_menu_font(fd->header, fd->glyphs, fd->bitmaps);
++    }
++    N3DS_MENU_STATE();
++#endif
+     return TRUE;
+ }
+ 
+@@ -108,6 +125,9 @@ BOOL MenuTabBar::onDelete() {
+     releaseResources();
+     Snd_EndMenuDuck();
+     MenuCtrl_ClearSyncMsgMenu();
++#ifdef N3DS_PORT
++    n3ds_menu_state(0, 0, 0, 0);
++#endif
+     return TRUE;
+ }
+ 
+@@ -122,6 +142,9 @@ BOOL MenuTabBar::onDraw() {
+         Oam_DrawObj(1, &sTabBarOamCells[j * 2], 0x80, slideY + 0x50, -1, 2, NULL);
+         Oam_DrawObj(1, &sTabBarOamCells[(j + 1) * 2], 0x80, slideY + 0x50, -1, 2, NULL);
+     }
++#ifdef N3DS_PORT
++    gpu2d_opt_button(slideY - 15);  // (the tabs' tops)
++#endif
+     return TRUE;
+ }
+ 
+@@ -140,6 +163,9 @@ BOOL MenuTabBar::execTransition() {
+                                            &MenuTabBar::stateSlideOut};
+     cancelVramTasks();
+     (this->*tbl[transitionState])();
++#ifdef N3DS_PORT
++    N3DS_MENU_STATE();
++#endif
+     return TRUE;
+ }
+ 
+@@ -189,6 +215,10 @@ BOOL MenuTabBar::execMain() {
+             Snd_PlaySe(3);
+         }
+     }
++#ifdef N3DS_PORT
++    N3DS_MENU_STATE();
++    N3ds_MenuTabBarStep(this);
++#endif
+     return TRUE;
+ }
+ 
+@@ -216,14 +246,14 @@ void MenuTabBar::selectTab(u32 idx) {
+         Snd_PlaySe(2);
+         data_021c1b3c->mixer.endMenuDuck();
+     } else {
+-        if (idx <= 6 && old <= 6) {
++        if (N3DS_IS_TAB(idx) && N3DS_IS_TAB(old)) {
+             Snd_PlaySe(3);
+         }
+     }
+     if (idx == 0) {
+         MenuCtrl_ClearSavedSlot();
+     }
+-    if (old <= 6 && idx <= 6) {
++    if (N3DS_IS_TAB(old) && N3DS_IS_TAB(idx)) {
+         lrSwitchEnabled = 1;
+     }
+ }
+@@ -250,6 +280,9 @@ u8 MenuTabBar::onTabMenuClosed() {
+     case 12:
+     case 13:
+     case 14:
++#ifdef N3DS_PORT
++    case N3DS_OPT_TAB:
++#endif
+         mainState = 1;
+         break;
+     }
+@@ -313,6 +346,11 @@ void MenuTabBar::updateOpenTabMenu() {
+             MenuCtrl_RequestOpenNested(0x2b);
+             MenuCtrl_SetMode(curTab);
+             break;
++#ifdef N3DS_PORT
++        case N3DS_OPT_TAB:
++            n3ds_menu_page();
++            break;
++#endif
+         case 7:
+             break;
+         }
+@@ -367,6 +405,11 @@ extern "C" s32 MenuTabBar_HitTestTouch() {
+     if (lim > 0x10) {
+         return -1;
+     }
++#ifdef N3DS_PORT
++    if (v >= 26 && v < 50) {  // the options page's button
++        return N3DS_OPT_TAB;
++    }
++#endif
+     if (v < 0x35) {
+         return -1;
+     }
+@@ -388,13 +431,29 @@ void MenuTabBar::showTabs() {
+ void MenuTabBar::hideTabs() { tabsShown = 0; }
+ 
+ extern "C" s32 MenuTabBar_GetTabX(s32 a) {
++#ifdef N3DS_PORT
++    if (a == N3DS_OPT_TAB) {
++        return 0x26;  // (the options button's middle, x 26-49: the tabs' are their left + 12, as 0x3f)
++    }
++#endif
+     if (a == 7) {
+         return 0xf3;
+     }
+     return a * 0x19 + 0x3f;
+ }
+ 
++// (the port: the options page between the friends and the pockets)
+ extern "C" u8 MenuTabBar_PrevTab(u8 a) {
++#ifdef N3DS_PORT
++    if (a == N3DS_OPT_TAB) {
++        sTabSwitchCooldown = 10;
++        return 6;
++    }
++    if (a == 0) {
++        sTabSwitchCooldown = 10;
++        return N3DS_OPT_TAB;
++    }
++#endif
+     if (a <= 6) {
+         sTabSwitchCooldown = 10;
+         if (a == 0) {
+@@ -407,6 +466,14 @@ extern "C" u8 MenuTabBar_PrevTab(u8 a) {
+ 
+ extern "C" u8 MenuTabBar_NextTab(u8 a) {
+     sTabSwitchCooldown = 10;
++#ifdef N3DS_PORT
++    if (a == 6) {
++        return N3DS_OPT_TAB;
++    }
++    if (a == N3DS_OPT_TAB) {
++        return 0;
++    }
++#endif
+     if (a <= 6) {
+         if (a == 6) {
+             return 0;
+@@ -429,15 +496,25 @@ void MenuTabBar::showTab(u32 idx) {
+         if (idx != loadedTab) {
+             char buf[0x24];
+             vramTasks[0].requestChars(commonObjChars, 8, 0x80, 0x80, 0xbf);
+-            u32 *a = tabObjChars + idx * 0x60;
++            u8 *a = (u8 *)tabObjChars + idx * 0x60;  // (bytes: the tab's 3 tiles of a row; the next row 0x400 on)
+             u32 t = idx * 3 + 0x80;
+-            vramTasks[1].requestCharPair(a, a + 0x400 / sizeof(u32), 8, t, t + 2, t + 0x20, t + 0x22);
++            vramTasks[1].requestCharPair(a, a + 0x400, 8, t, t + 2, t + 0x20, t + 0x22);
+             Str_SPrintf(buf, "menu/tag/obj%d.bpl", idx);
+             File_LoadToBuffer(buf, tabPalette, 0x20);
+             vramTasks[2].requestPalette(tabPalette, 8, 0xf);
+             loadedTab = idx;
+         }
+     }
++#ifdef N3DS_PORT
++    // the options page: every tab of the game's unlit (the host lights its button): their tiles and the base palette
++    // (a lit tab's obj%d.bpl changes palette 15, which all the tabs use)
++    if (idx == N3DS_OPT_TAB && idx != loadedTab) {
++        vramTasks[0].requestChars(commonObjChars, 8, 0x80, 0x80, 0xbf);
++        File_LoadToBuffer("menu/tag/obj.bpl", tabPalette, 0x20);
++        vramTasks[2].requestPalette(tabPalette, 8, 0xf);
++        loadedTab = idx;
++    }
++#endif
+ }
+ 
+ void MenuTabBar::requestSaveOnClose() { saveState = 1; }
+diff --git a/src/ov094/unk_ov094_02292da8.cpp b/src/ov094/unk_ov094_02292da8.cpp
+index 4665f069..8268c560 100644
+--- a/src/ov094/unk_ov094_02292da8.cpp
++++ b/src/ov094/unk_ov094_02292da8.cpp
+@@ -1,4 +1,5 @@
+ #include "types.h"
++#include "n3ds_options.h"
+ #include "item/ItemIconCache.h"
+ #include "item/ItemName.h"
+ #include "menu/InventoryGridTypes.h"
+@@ -181,6 +182,9 @@ void InventoryItemGrid_LoadSlotIcon(InventoryItemGrid *o, s32 k, u16 *p, s32 a)
+         OamObjTemplate *e = InventoryItemGrid_GetSlotSprite(o, k);
+         s32 c = e->charName();
+         u8 *q = o->iconCache.getIconChars(r);
++#ifdef N3DS_PORT
++        q = InventoryItemGrid_StackIcon(q, *p, InventoryItemGrid_GetIconPalette(&o->iconCache, r));
++#endif
+         Gfx2d_LoadCharRange(q, 8, c, c, c + 1);
+         Gfx2d_LoadCharRange(q + 0x400, 8, c + 0x20, c + 0x20, c + 0x21);
+         u32 n = InventoryItemGrid_GetIconPalette(&o->iconCache, r);
+@@ -259,6 +263,12 @@ void InventoryItemGrid_SetBalloonItemName(InventoryItemGrid *o, LabelBalloon *ds
+     case 0:
+     default:
+         itemName.setFromItem(p);
++#ifdef N3DS_PORT
++        if (n3ds_fruit_count(*p) > 1) {  // a fruit stack (n3ds_options.h): "apple x3"
++            u8 n[4] = {' ', 'x', (u8)('0' + n3ds_fruit_count(*p)), 0};
++            itemName.append(n);
++        }
++#endif
+         StrBuf_Copy((StrBuf *)&balloonText, (StrBuf *)&itemName);
+         break;
+     }
+@@ -375,6 +385,9 @@ void InventoryItemGrid_SetSpriteItem(InventoryItemGrid *s, OamObjTemplate *r, u3
+     s32 idx = InventoryItemGrid_GetIconIndex(s, &w, m);
+     u8 *d = s->iconCache.getIconChars(idx);
+     u32 c = InventoryItemGrid_GetIconPalette(&s->iconCache, idx);
++#ifdef N3DS_PORT
++    d = InventoryItemGrid_StackIcon(d, w, c);
++#endif
+     InventoryItemGrid_UploadIcon(s, r, d, c);
+ }
+ 
+diff --git a/src/ov095/unk_02292360.cpp b/src/ov095/unk_02292360.cpp
+index 9051efb8..7a139b7c 100644
+--- a/src/ov095/unk_02292360.cpp
++++ b/src/ov095/unk_02292360.cpp
+@@ -23,6 +23,10 @@
+ #include "proto/ov002/unk_ov002_02200840.h"
+ #include "proto/ov090/unk_ov090_022918e0.h"
+ #include "proto/ov095/unk_02292360.h"
++#ifdef N3DS_PORT
++#include "n3ds_ui.h"
++extern "C" BOOL N3ds_KeyboardMoveOptKey(Keyboard *s, u32 p);  // modern/n3ds/menu_tab_bar.cpp
++#endif
+ #include "gfx/BgVramTask.h"
+ 
+ 
+@@ -225,6 +229,11 @@ BOOL Keyboard_IsMenuTabKey(Keyboard *s, s32 a)
+     if (a >= 0xcd && a <= 0xd4) {
+         return TRUE;
+     }
++#ifdef N3DS_PORT
++    if (a == N3DS_KB_OPT_KEY) {
++        return TRUE;
++    }
++#endif
+     return FALSE;
+ }
+ 
+@@ -727,6 +736,11 @@ s32 Keyboard_GetSpecialKeyCode(Keyboard *s, s32 a)
+     if (a >= 0xc9 && a <= 0xe1) {
+         return a + 0x3d;
+     }
++#ifdef N3DS_PORT
++    if (a == N3DS_KB_OPT_KEY) {
++        return N3DS_KB_OPT_CODE;
++    }
++#endif
+     return -1;
+ }
+ 
+@@ -1649,7 +1663,11 @@ s32 Keyboard_CalcChatKeyPos(Keyboard *s)
+         return 1;
+     }
+     if (Keyboard_IsMenuTabKey(s, v) != 0) {
++#ifdef N3DS_PORT
++        s->cursorX = MenuTabBar_GetTabX(s->cursorKey == N3DS_KB_OPT_KEY ? N3DS_OPT_TAB : s->cursorKey - 0xcd);
++#else
+         s->cursorX = MenuTabBar_GetTabX(s->cursorKey - 0xcd);
++#endif
+         s->cursorY = 8;
+         return 1;
+     }
+@@ -2514,6 +2532,9 @@ BOOL Keyboard_MoveOnChatKeys(Keyboard *s, u32 p)
+         }
+         return TRUE;
+     }
++#ifdef N3DS_PORT
++    if (N3ds_KeyboardMoveOptKey(s, p)) return TRUE;
++#endif
+     if (Keyboard_IsMenuTabKey(s, s->cursorKey) != 0) {
+         if (MenuKeys_HasDown(p) != 0) {
+             if (s->cursorKey >= 0xd3) {
+diff --git a/src/ov096/unk_02294c40.cpp b/src/ov096/unk_02294c40.cpp
+index 97232eb4..1c5d6027 100644
+--- a/src/ov096/unk_02294c40.cpp
++++ b/src/ov096/unk_02294c40.cpp
+@@ -1,6 +1,13 @@
+ #include "uptr.h"
+ #include "host_shared_calls.h"
+ #include "types.h"
++#include "n3ds_options.h"
++#ifdef N3DS_PORT
++#include "n3ds_ui.h"
++#define POCKET_TAB_OF(id) ((id) == POCKET_OPT_TARGET ? N3DS_OPT_TAB : (id) - 0x19)
++#else
++#define POCKET_TAB_OF(id) ((id) - 0x19)
++#endif
+ #include "Unk_020d8c7c.h"
+ #include "net/CommManager.h"
+ #include "ui/UiWidget.h"
+@@ -25,6 +32,7 @@
+ #include "ui/HandCursor.h"
+ #include "ui/HudController.h"
+ #include "ui/LabelBalloon.h"
++#include "ui/LabelString.h"
+ #include "ui/LabelButton.h"
+ #include "ui/AddresseePageArg.h"
+ #include "proto/autoload_2/unk_020e7fd4.h"
+@@ -1012,7 +1020,7 @@ void PocketMenu::mainAct0F() {
+ 
+ void PocketMenu::mainAct10() {
+     if (m_2498.isAnimDone()) {
+-        if (requestTab(cursorTarget - 0x19) == 0) {
++        if (requestTab(POCKET_TAB_OF(cursorTarget)) == 0) {
+             releaseCursor();
+         }
+     }
+@@ -1381,14 +1389,32 @@ void PocketMenu::mainAct32()
+     }
+ }
+ 
++#ifdef N3DS_PORT
++// Stacked fruit (n3ds_options.h; modern/n3ds/stacked_fruit.cpp): what stays of a dropped stack, and "Take One": one action
++// more than the game's 0-0x21, 0x22 being "Never Mind"
++extern "C" BOOL PocketMenu_KeepFruitRest(PocketMenu *s, u32 t, u32 v);
++extern "C" void PocketMenu_TakeOneFruit(PocketMenu *s);
++#define N3DS_ACTION_TAKE_ONE 0x23
++// the options button in the tab row (modern/n3ds/menu_tab_bar.cpp) and stacked fruit merging (stacked_fruit.cpp): done
++// if they took the turn
++extern "C" BOOL N3ds_PocketMoveOptButton(PocketMenu *s, u32 pad);
++extern "C" BOOL N3ds_MergeFruit(u16 *a, u16 *b);
++#endif
++
+ void PocketMenu::mainAct28()
+ {
+     switch (FieldAction_PollDrop(fieldRequest)) {
+     case 1:
+         if (testFlags(0x1000)) {
++#ifdef N3DS_PORT
++            if (!PocketMenu_KeepFruitRest(this, actionTarget, PocketMenu_GetItem(this, actionTarget)))
++#endif
+             Shared_InventoryItemGrid_ClearSlot(&m_358, PocketMenu_TargetToGridIndex(this, actionTarget));
+             PocketMenu_ReturnToIdle(this);
+         } else {
++#ifdef N3DS_PORT
++            PocketMenu_KeepFruitRest(this, handSource, handItem);
++#endif
+             clearHand();
+             PocketMenu_ReturnToIdle(this);
+         }
+@@ -1633,6 +1659,11 @@ extern "C" u32 PocketMenu_IsTabTarget(PocketMenu *s, u32 id)
+     if (id >= 0x19 && id <= 0x20) {
+         return 1;
+     }
++#ifdef N3DS_PORT
++    if (id == POCKET_OPT_TARGET) {
++        return 1;
++    }
++#endif
+     return 0;
+ }
+ 
+@@ -1687,6 +1718,12 @@ extern "C" s32 PocketMenu_DropItemAt(PocketMenu *s, u32 id)
+     if (PocketMenu_IsLetterTarget(s, id) && PocketMenu_IsSlotEmpty(s, id)) {
+         return 0;
+     }
++#ifdef N3DS_PORT
++    if (PocketMenu_IsLetterTarget(s, id) && n3ds_fruit_count(s->handItem) > 1) {  // no fruit stack into a letter
++        s->returnHand(1);
++        return 1;
++    }
++#endif
+     if (PocketMenu_IsPocketTarget(s, id) || PocketMenu_IsLetterTarget(s, id)) {
+         v = PocketMenu_GetItem(s, id);
+         s->mergeItems((u16 *)(&s->handItem), s->handItemFlags, &v, PocketMenu_GetItemFlags(s, id));
+@@ -1897,7 +1934,7 @@ extern "C" s32 PocketMenu_GetTargetX(PocketMenu *s, u32 id)
+         return LetterGrid_GetSlotX(&s->m_db8, PocketMenu_TargetToLetterIndex(s, id));
+     }
+     if (PocketMenu_IsTabTarget(s, id)) {
+-        return MenuTabBar_GetTabX(id - 0x19) - 8;
++        return MenuTabBar_GetTabX(POCKET_TAB_OF(id)) - 8;
+     }
+     if (PocketMenu_IsSpecialTarget(s, id)) {
+         return InventoryItemGrid_GetSlotX(&s->m_358, PocketMenu_TargetToGridIndex(s, id));
+@@ -2347,6 +2384,9 @@ s32 PocketMenu::dropHeldItem() {
+         return 0;
+     }
+     if (r == 1) {
++#ifdef N3DS_PORT
++        PocketMenu_KeepFruitRest(this, handSource, handItem);
++#endif
+         clearHand();
+         return 1;
+     }
+@@ -2648,6 +2688,9 @@ s32 PocketMenu::mergeItems(u16 *a, s32 f, u16 *b, u8 g) {
+     if (f != 0 || g != 0) {
+         return 1;
+     }
++#ifdef N3DS_PORT
++    if (N3ds_MergeFruit(a, b)) return 0;
++#endif
+     loc[0] = *a;
+     loc[1] = *b;
+     ok = FALSE;
+@@ -2882,6 +2925,9 @@ BOOL PocketMenu::canDropItem(s32 a) {
+ }
+ 
+ s32 PocketMenu::requestDropItem(s32 a) {
++#ifdef N3DS_PORT
++    a = n3ds_fruit_one(a);  // of a fruit stack one fruit (the rest stays: PocketMenu_KeepFruitRest)
++#endif
+     if (Unk_ov096_0229652c_IsZero(gFieldSceneKind)) {
+         fieldRequest = FieldAction_RequestDrop(gCommManager->myAid, a);
+         if (fieldRequest == -1) {
+@@ -2912,6 +2958,9 @@ void PocketMenu::actionDropItem() {
+                 setFlags(0x1000);
+             } else {
+                 s32 x = PocketMenu_TargetToGridIndex(this, t);
++#ifdef N3DS_PORT
++                if (!PocketMenu_KeepFruitRest(this, t, r6))
++#endif
+                 Shared_InventoryItemGrid_ClearSlot(&m_358, x);
+                 PocketMenu_ReturnToIdle(this);
+             }
+@@ -3131,6 +3180,12 @@ void PocketMenu::runChosenAction() {
+         PocketMenu_ReturnToIdle(this);
+         return;
+     }
++#ifdef N3DS_PORT
++    if (chosenAction == N3DS_ACTION_TAKE_ONE) {
++        PocketMenu_TakeOneFruit(this);
++        return;
++    }
++#endif
+     static Unk_ov096_0229aea8_Fn tbl[34] = {
+         &PocketMenu::actionAct00, &PocketMenu::actionAct00,
+         &PocketMenu::actionDropItem, &PocketMenu::actionReadLetter,
+@@ -3236,6 +3291,13 @@ void PocketMenu::addItemOptions(s32 a) {
+         if (canDropItem(a)) {
+             ChoiceIdList_Add(optionList, Unk_ov096_0229590c_IsZero(gFieldSceneKind) ? 1 : 0xa, 2);
+         }
++#ifdef N3DS_PORT
++        if (n3ds_fruit_count(a) > 1 && PocketMenu_FindEmptyPocket(this) != 0x26) {  // (PocketMenu_TakeOneFruit)
++            LabelString t;
++            t.set((u8 *)"Take One");
++            PocketMenu_Popup(this)->addCustomRow((PopupChoiceIdList *)optionList, &t, N3DS_ACTION_TAKE_ONE);
++        }
++#endif
+         if (Unk_ov096_0229590c_IsZero(gFieldSceneKind)) {
+             addFieldOptions(a);
+         } else if (Scene_InHouseRoom()) {
+@@ -3536,6 +3598,9 @@ void PocketMenu::moveCursorInLetters(u32 pad, s32 mode) {
+ }
+ 
+ void PocketMenu::moveCursorInTabs(u32 pad, s32 mode) {
++#ifdef N3DS_PORT
++    if (N3ds_PocketMoveOptButton(this, pad)) return;
++#endif
+     if (MenuKeys_HasLeft(pad)) {
+         if (*(volatile u8 *)&cursorTarget > 0x19) {
+             cursorTarget = cursorTarget - 1;
+diff --git a/src/ov098/unk_ov098_0229b280.cpp b/src/ov098/unk_ov098_0229b280.cpp
+index b75b2604..c9af915c 100644
+--- a/src/ov098/unk_ov098_0229b280.cpp
++++ b/src/ov098/unk_ov098_0229b280.cpp
+@@ -1,4 +1,5 @@
+ #include "types.h"
++#include "n3ds_options.h"
+ #include "host_labels.h"
+ #include "host_shared_calls.h"
+ #include "Unk_020d8c7c.h"
+@@ -314,6 +315,9 @@ void PocketMenu::actionBuryItem() {
+         s32 pair[2];
+         pair[0] = digUnitX;
+         pair[1] = digUnitY;
++#ifdef N3DS_PORT
++        a = n3ds_fruit_one(a);  // of a fruit stack one fruit is buried (mainAct2E)
++#endif
+         fieldRequest = FieldAction_RequestTool(gCommManager->myAid, pair, 2, 0, a);
+         if (fieldRequest == -1) {
+             PocketMenu_ReturnToIdle(this);
+@@ -344,7 +348,15 @@ void PocketMenu::mainAct2E() {
+     VecFx32 out;
+     FieldPos_FromUnitCenter(&out, digUnitX, digUnitY);
+     v = PocketMenu_GetItem(this, actionTarget);
++#ifdef N3DS_PORT
++    v = n3ds_fruit_one(v);  // a fruit stack (n3ds_options.h): one fruit goes into the hole, the rest stays
++#endif
+     if (PlayerActor_LocalRequestBuryItem(&out, &v)) {
++#ifdef N3DS_PORT
++        if (n3ds_fruit_count(PocketMenu_GetItem(this, actionTarget)) > 1)
++            PocketMenu_SetSlotItem(this, actionTarget, n3ds_fruit_rest(PocketMenu_GetItem(this, actionTarget)), 0);
++        else
++#endif
+         PocketMenu_ClearSlotItem(this, actionTarget);
+         setMainState(0x2f);
+     }
+diff --git a/src/ov111/unk_02296840.cpp b/src/ov111/unk_02296840.cpp
+index bd154cc7..05be81a5 100644
+--- a/src/ov111/unk_02296840.cpp
++++ b/src/ov111/unk_02296840.cpp
+@@ -38,6 +38,9 @@
+ #include "proto/ov090/unk_ov090_022918e0.h"
+ #include "proto/ov095/unk_02292360.h"
+ #include "proto/ov111/unk_02296840.h"
++#ifdef N3DS_PORT
++#include "n3ds_ui.h"
++#endif
+ 
+ enum Unk_ov111_022970cc_Status { UNK_OV111_ST_0 = 0, UNK_OV111_ST_1 = 1, UNK_OV111_ST_2 = 2, UNK_OV111_ST_3 = 3 };
+ 
+@@ -1152,6 +1155,12 @@ s32 ChatMenu::pressKeyCode(u32 x) {
+             ChatMenu_RequestTab(this, x - 0x10a, 0);
+             r = UNK_OV111_ST_2;
+             break;
++#ifdef N3DS_PORT
++        case N3DS_KB_OPT_CODE - 0x100:  // (the options button: N3DS_KB_OPT_KEY)
++            ChatMenu_RequestTab(this, N3DS_OPT_TAB, 0);
++            r = UNK_OV111_ST_2;
++            break;
++#endif
+         case 27:
+         case 28:
+         case 29:
+diff --git a/src/ov114/unk_ov114_02294c40.cpp b/src/ov114/unk_ov114_02294c40.cpp
+index af4876bb..f988355d 100644
+--- a/src/ov114/unk_ov114_02294c40.cpp
++++ b/src/ov114/unk_ov114_02294c40.cpp
+@@ -28,6 +28,12 @@
+ #include "proto/autoload_2/unk_020e8558.h"
+ #include "proto/main/unk_02087e70.h"
+ #include "proto/ov002/unk_ov002_022025cc.h"
++#ifdef N3DS_PORT
++#include "n3ds_ui.h"
++// the options button as a focus in the tab row, left of the pockets' tab (0-0xc are taken, 0xd on the list's entries,
++// at most 0xd + 0x38): a tab focus whose tab is N3DS_OPT_TAB
++#define BOOK_OPT_FOCUS 0xff
++#endif
+ 
+ 
+ extern "C" {
+@@ -814,7 +820,11 @@ void CreatureBook_SelectEntry(CreatureBookPanel *s, u8 v) {
+ s32 CreatureBook_GetFocusX(CreatureBookPanel *s) {
+     s32 r;
+     if (CreatureBook_GetFocusedTab(s) != -1) {
++#ifdef N3DS_PORT
++        r = MenuTabBar_GetTabX(CreatureBook_GetFocusedTab(s));
++#else
+         r = MenuTabBar_GetTabX(s->focus - 5);
++#endif
+     } else {
+         u32 t = s->focus;
+         if (t == 4) {
+@@ -855,6 +865,11 @@ s32 CreatureBook_GetFocusedTab(CreatureBookPanel *s) {
+     if (v >= 5 && v <= 0xc) {
+         return v - 5;
+     }
++#ifdef N3DS_PORT
++    if (v == BOOK_OPT_FOCUS) {
++        return N3DS_OPT_TAB;
++    }
++#endif
+     return -1;
+ }
+ 
+@@ -872,6 +887,18 @@ BOOL CreatureBook_MoveFocus(CreatureBookPanel *s, u32 pad) {
+         return FALSE;
+     }
+     u8 old = s->focus;
++#ifdef N3DS_PORT
++    // the options button: Left from the pockets' tab, Right back to it, Down as from the tabs
++    if (s->focus == BOOK_OPT_FOCUS) {
++        if (MenuKeys_HasDown(pad)) {
++            s->focus = 0;
++        } else if (MenuKeys_HasRight(pad)) {
++            s->focus = 5;
++        }
++    } else if (s->focus == 5 && MenuKeys_HasLeft(pad) && !MenuKeys_HasDown(pad)) {
++        s->focus = BOOK_OPT_FOCUS;
++    } else
++#endif
+     if (CreatureBook_GetFocusedTab(s) != -1) {
+         if (MenuKeys_HasDown(pad)) {
+             s->focus = 0;
+diff --git a/src/ov118/unk_02292d00.cpp b/src/ov118/unk_02292d00.cpp
+index af20980f..ec983935 100644
+--- a/src/ov118/unk_02292d00.cpp
++++ b/src/ov118/unk_02292d00.cpp
+@@ -40,6 +40,12 @@
+ #include "proto/main/unk_020637e4.h"
+ #include "proto/ov002/unk_ov002_022025cc.h"
+ #include "player/PlayerData.h"
++#ifdef N3DS_PORT
++#include "n3ds_ui.h"
++// the options button as a hand target in the tab row, left of the pockets' tab (0x10 is the scroll knob): a tab target
++// whose tab is N3DS_OPT_TAB
++#define MAP_OPT_TARGET 0x11
++#endif
+ 
+ extern "C" {
+ extern u16 gPad[];
+@@ -1465,7 +1471,11 @@ void MapTab::showCursor() {
+     if (cursorTarget >= 0xa && cursorTarget <= 0xf) {
+         setListScrollTarget(listScroll & ~0xf);
+     }
++#ifdef N3DS_PORT
++    if (cursorTarget <= 7 || cursorTarget == MAP_OPT_TARGET) {
++#else
+     if (cursorTarget <= 7) {
++#endif
+         ((MenuCursor *)&cursor)->setAnimIfChanged(0xd);
+     } else {
+         ((MenuCursor *)&cursor)->setAnimIfChanged(1);
+@@ -1484,6 +1494,11 @@ s32 MapTab::getCursorTargetX() {
+     if (c <= 7) {
+         return MenuTabBar_GetTabX(c);
+     }
++#ifdef N3DS_PORT
++    if (c == MAP_OPT_TARGET) {
++        return MenuTabBar_GetTabX(N3DS_OPT_TAB);
++    }
++#endif
+     if (c == 8) {
+         return 0xd8;
+     }
+@@ -1510,6 +1525,11 @@ s32 MapTab::getCursorTargetY() {
+     if (c <= 7) {
+         return 8;
+     }
++#ifdef N3DS_PORT
++    if (c == MAP_OPT_TARGET) {
++        return 8;
++    }
++#endif
+     if (c == 0x10) {
+         return scrollKnob.getGripY();
+     }
+@@ -1572,6 +1592,11 @@ s32 MapTab::moveCursorByPad(u32 pad) {
+             if (ACV != 0) {
+                 ACV = ACV - 1;
+             }
++#ifdef N3DS_PORT
++            else {
++                cursorTarget = MAP_OPT_TARGET;  // (from the pockets' tab onto the options button)
++            }
++#endif
+         } else if (MenuKeys_HasRight(pad)) {
+             if (ACV < 7) {
+                 ACV = ACV + 1;
+@@ -1610,6 +1635,19 @@ s32 MapTab::moveCursorByPad(u32 pad) {
+             mapCursorY = ((MenuCursorBase *)&cursor)->getScreenY();
+             return 2;
+         }
++#ifdef N3DS_PORT
++    } else if (old == MAP_OPT_TARGET) {
++        // the options button: Right back onto the pockets' tab, Down into the map as from the pockets' tab
++        if (MenuKeys_HasDown(pad)) {
++            cursorTarget = 0;
++            mapCursorX = ((MenuCursorBase *)&cursor)->getScreenX();
++            mapCursorY = 0x30;
++            ((MenuCursor *)&cursor)->switchToAnim01();
++            return 2;
++        } else if (MenuKeys_HasRight(pad)) {
++            cursorTarget = 0;
++        }
++#endif
+     } else if (old == 0x10) {
+         if (MenuKeys_HasUp(pad)) {
+             cursorTarget = 8;
+@@ -1679,6 +1717,10 @@ s32 MapTab::onCursorDecide() {
+             return 2;
+         }
+         return 0;
++#ifdef N3DS_PORT
++    } else if (s == MAP_OPT_TARGET) {
++        return requestTab(N3DS_OPT_TAB) ? 1 : 0;
++#endif
+     } else if (s <= 7) {
+         if (requestTab(s)) {
+             return 1;
+diff --git a/src/ov119/unk_ov119_02292d00.cpp b/src/ov119/unk_ov119_02292d00.cpp
+index a1691c6e..77f7cbda 100644
+--- a/src/ov119/unk_ov119_02292d00.cpp
++++ b/src/ov119/unk_ov119_02292d00.cpp
+@@ -86,6 +86,15 @@ class FriendRosterTab;
+ typedef void (FriendRosterTab::*Unk_ov119_02295840_Fn)();
+ 
+ #define A0V (*(volatile u8 *)&focus)
++#ifdef N3DS_PORT
++#include "n3ds_ui.h"
++// the options button as a focus in the tab row, left of the pockets' tab (0x17 is "none"): a tab focus whose tab is
++// N3DS_OPT_TAB
++#define FRIEND_OPT_FOCUS 0x18
++#define FRIEND_IS_TAB(v) (((v) >= 0xe && (v) <= 0x15) || (v) == FRIEND_OPT_FOCUS)
++#else
++#define FRIEND_IS_TAB(v) ((v) >= 0xe && (v) <= 0x15)
++#endif
+ #define E9V (*(volatile u8 *)&labelCount)
+ #define B1V (*(volatile u8 *)&delayTimer)
+ 
+@@ -854,7 +863,7 @@ void FriendRosterTab::showCursor() {
+     u32 v = A0V;
+     if (v <= 7) {
+         U970_B->setAnimIfChanged(7);
+-    } else if (v >= 0xe && v <= 0x15) {
++    } else if (FRIEND_IS_TAB(v)) {
+         U970_B->setAnimIfChanged(0xd);
+     } else {
+         U970_B->setAnimIfChanged(1);
+@@ -870,6 +879,11 @@ s32 FriendRosterTab::getFocusX() {
+     if (v >= 0xe && v <= 0x15) {
+         return MenuTabBar_GetTabX(v - 0xe);
+     }
++#ifdef N3DS_PORT
++    if (v == FRIEND_OPT_FOCUS) {
++        return MenuTabBar_GetTabX(N3DS_OPT_TAB);
++    }
++#endif
+     if (v >= 8 && v <= 0xd) {
+         return 0xd6;
+     }
+@@ -884,7 +898,7 @@ s32 FriendRosterTab::getFocusY() {
+     if (v <= 7) {
+         return v * 16 + 0x38;
+     }
+-    if (v >= 0xe && v <= 0x15) {
++    if (FRIEND_IS_TAB(v)) {
+         return 8;
+     }
+     if (v >= 8 && v <= 0xd) {
+@@ -905,7 +919,7 @@ void FriendRosterTab::moveCursorToTarget() {
+     u32 v = A0V;
+     if (v <= 7) {
+         U970_B->switchToAnim07();
+-    } else if (v >= 0xe && v <= 0x15) {
++    } else if (FRIEND_IS_TAB(v)) {
+         U970_B->switchToAnim0D();
+     } else {
+         U970_B->switchToAnim01();
+@@ -990,12 +1004,25 @@ BOOL FriendRosterTab::moveFocus(u32 keys) {
+                 A0V = t + 8;
+             }
+         }
+-    } else if (old >= 0xe && old <= 0x15) {
++    } else if (FRIEND_IS_TAB(old)) {
+         if (MenuKeys_HasLeft(keys)) {
+             if (A0V > 0xe) {
++#ifdef N3DS_PORT
++                if (A0V != FRIEND_OPT_FOCUS)  // (the options button: nothing further left)
++#endif
+                 A0V = A0V - 1;
+             }
++#ifdef N3DS_PORT
++            else {
++                A0V = FRIEND_OPT_FOCUS;  // (from the pockets' tab onto the options button)
++            }
++#endif
+         } else if (MenuKeys_HasRight(keys)) {
++#ifdef N3DS_PORT
++            if (A0V == FRIEND_OPT_FOCUS) {
++                A0V = 0xe;  // (back onto the pockets' tab)
++            } else
++#endif
+             if (A0V < 0x15) {
+                 A0V = A0V + 1;
+             }
+@@ -1179,6 +1206,11 @@ void FriendRosterTab::showFriend(s32 x)
+ BOOL FriendRosterTab::activateFocus()
+ {
+     u32 m = focus;
++#ifdef N3DS_PORT
++    if (m == FRIEND_OPT_FOCUS) {
++        return requestTab(N3DS_OPT_TAB) ? TRUE : FALSE;
++    }
++#endif
+     if (m >= 0xe && m <= 0x15) {
+         if (requestTab(m - 0xe)) {
+             return TRUE;
+diff --git a/src/ov121/unk_ov121_02292360.cpp b/src/ov121/unk_ov121_02292360.cpp
+index ad1eaf51..00ea1170 100644
+--- a/src/ov121/unk_ov121_02292360.cpp
++++ b/src/ov121/unk_ov121_02292360.cpp
+@@ -15,6 +15,12 @@
+ #include "net/CommManager.h"
+ #include "nitro/gxoam.h"
+ #include "menu/MenuTabBar.h"
++#ifdef N3DS_PORT
++#include "n3ds_ui.h"
++// the options button as a hand target in the tab row, left of the pockets' tab (0x18 is "none"): a tab target whose tab
++// is N3DS_OPT_TAB
++#define DESIGN_OPT_SLOT 0x19
++#endif
+ #include "player/PlayerData.h"
+ #include "save/Pattern.h"
+ #include "save/PatternOrder.h"
+@@ -949,11 +955,17 @@ void DesignTab::openMessageWindow(u32 a, u32 b) {
+ 
+ s32 DesignTab::getSlotX(u32 i) {
+     if (i >= 0x10 && i <= 0x17) return MenuTabBar_GetTabX(i - 0x10);
++#ifdef N3DS_PORT
++    if (i == DESIGN_OPT_SLOT) return MenuTabBar_GetTabX(N3DS_OPT_TAB);
++#endif
+     return sDesignTabSlotX[i];
+ }
+ 
+ u32 DesignTab::getSlotY(u32 i) {
+     if (i >= 0x10 && i <= 0x17) return 8;
++#ifdef N3DS_PORT
++    if (i == DESIGN_OPT_SLOT) return 8;
++#endif
+     return sDesignTabSlotY[i];
+ }
+ 
+@@ -1589,6 +1601,11 @@ s32 DesignTab::getCursorTab() {
+     if (t >= 0x10 && t <= 0x17) {
+         return t - 0x10;
+     }
++#ifdef N3DS_PORT
++    if (t == DESIGN_OPT_SLOT) {
++        return N3DS_OPT_TAB;
++    }
++#endif
+     return -1;
+ }
+ 
+@@ -1605,6 +1622,11 @@ BOOL DesignTab::moveCursorHorizontal(u32 pad, u32 f) {
+             if (t > 0x10 && t <= 0x17) {
+                 cursorSlot = *(volatile u8 *)&cursorSlot - 1;
+             }
++#ifdef N3DS_PORT
++            else if (t == 0x10) {
++                cursorSlot = DESIGN_OPT_SLOT;  // (from the pockets' tab onto the options button)
++            }
++#endif
+         }
+     } else if (MenuKeys_HasRight(pad)) {
+         if (cursorSlot == 8) {
+@@ -1621,6 +1643,11 @@ BOOL DesignTab::moveCursorHorizontal(u32 pad, u32 f) {
+             if (t >= 0x10 && t < 0x17) {
+                 cursorSlot = *(volatile u8 *)&cursorSlot + 1;
+             }
++#ifdef N3DS_PORT
++            else if (t == DESIGN_OPT_SLOT) {
++                cursorSlot = 0x10;  // (back onto the pockets' tab)
++            }
++#endif
+         }
+     }
+     return testFlags(0x60);
+@@ -1667,6 +1694,9 @@ void DesignTab::moveCursorVertical(u32 pad, u32 f) {
+         if (!cursorRowDown(0, 3, 4)) {
+             s32 t = getCursorTab();
+             if (t != -1) {
++#ifdef N3DS_PORT
++                if (t == N3DS_OPT_TAB) t = 0;  // (down from the options button as from the pockets' tab)
++#endif
+                 moveCursorFromTab(t);
+             } else if (!cursorRowDown(0xc, 0xf, 0)) {
+                 u32 b = cursorSlot;

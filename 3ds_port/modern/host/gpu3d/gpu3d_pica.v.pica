@@ -1,0 +1,54 @@
+; The 3DS's vertex shader for the own 3D engine's polygons (gpu3d_pica.c): the geometry engine has transformed and
+; lit them already. The position is in the DS screen's clip space; `target` maps it to the picture drawn into
+; (the identity where the two are the same). The colour is multiplied by `cscale` and the texture coordinates are
+; `tscale` * tc + `tbias`: the port's vertices carry them raw (bytes, shorts); the other build's, as they are.
+;
+; The port's display lists drawn by the GPU (ACWW_G3D_GPU, gpu3d_pica.c g3p_gpu_draw): the position is the
+; list's object coordinates and `target` the whole way from there (clip matrix, viewport, depth, picture); v1 is the
+; normal, `cscale` 0, and the colour is the DS's lighting without the specular term: `lbase` (emission and ambient,
+; the polygon's alpha in w) + for each light max(0, `ldir` . normal) * `lcol`. For every other vertex `lbase`,
+; `ldir` and `lcol` are 0. A list under the DS's texture matrix has its scale and shift in `tscale` and `tbias`.
+
+.fvec target[4]
+.fvec cscale
+.fvec tscale
+.fvec tbias
+.fvec lbase
+.fvec ldir[4]
+.fvec lcol[4]
+
+.constf k(0.0, 1.0, 0.0, 0.0)
+
+.out outpos position
+.out outclr color
+.out outtc0 texcoord0
+
+.alias inpos v0
+.alias inclr v1
+.alias intc0 v2
+
+.proc main
+	dp4 outpos.x, target[0], inpos
+	dp4 outpos.y, target[1], inpos
+	dp4 outpos.z, target[2], inpos
+	dp4 outpos.w, target[3], inpos
+	mul r1, cscale, inclr
+	add r1, lbase, r1
+	dp3 r2.x, ldir[0], inclr
+	dp3 r2.y, ldir[1], inclr
+	dp3 r2.z, ldir[2], inclr
+	dp3 r2.w, ldir[3], inclr
+	max r2, k.xxxx, r2
+	mul r3, lcol[0], r2.xxxx
+	add r1, r1, r3
+	mul r3, lcol[1], r2.yyyy
+	add r1, r1, r3
+	mul r3, lcol[2], r2.zzzz
+	add r1, r1, r3
+	mul r3, lcol[3], r2.wwww
+	add r1, r1, r3
+	min outclr, k.yyyy, r1
+	mul r0, tscale, intc0
+	add outtc0, tbias, r0
+	end
+.end

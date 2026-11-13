@@ -1,0 +1,19 @@
+:root { --ink: #1f2a24; --paper: #f6f3ea; --leaf: #2f7d4f; --bad: #a33327; --line: #d9d3c3; }
+@media (prefers-color-scheme: dark) {
+  :root { --ink: #e9e6dc; --paper: #1b211d; --leaf: #7fcf9a; --bad: #ef8f82; --line: #3a443d; }
+}
+body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.5 system-ui, sans-serif; }
+main { max-width: 42rem; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+h1 { font-size: 1.7rem; margin: 0 0 .5rem; }
+h2 { font-size: 1.15rem; margin: 0 0 .5rem; }
+.lead { font-size: 1.05rem; }
+section { border-top: 1px solid var(--line); padding: 1.2rem 0; }
+label { display: block; margin: .35rem 0; }
+code { background: color-mix(in srgb, var(--ink) 10%, transparent); padding: 0 .25em; border-radius: 3px; }
+button { font: inherit; padding: .6rem 1.2rem; border: 0; border-radius: 6px; background: var(--leaf); color: var(--paper); cursor: pointer; }
+button:disabled { opacity: .45; cursor: default; }
+input[type=file], select { font: inherit; max-width: 100%; }
+.status { min-height: 1.5em; margin: .4rem 0 0; overflow-wrap: anywhere; }
+.status.ok { color: var(--leaf); }
+.status.bad, .warn { color: var(--bad); }
+footer { border-top: 1px solid var(--line); padding-top: 1rem; font-size: .85rem; opacity: .8; overflow-wrap: anywhere; }

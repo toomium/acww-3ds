@@ -1,0 +1,56 @@
+From: acww-3ds export <noreply@invalid>
+Subject: [PATCH] Shared headers of the runtime
+
+Changes 2 files of the decompilation for the 3DS port (area: runtime-headers).
+Made by tools/export_from_fork.py; do not edit by hand.
+
+diff --git a/include/host_mem.h b/include/host_mem.h
+index f37276ad..9bb4ea80 100644
+--- a/include/host_mem.h
++++ b/include/host_mem.h
+@@ -102,6 +102,9 @@ extern unsigned char gHostOam[0x800];
+ #define HW_OAM (gHostOam)    // 0x07000000: OAM A, +0x400 OAM B
+ 
+ void *HostVram_CpuPtr(unsigned int dsaddr);
++// the enhanced 3DS port (N3DS_PORT): an LCDC address of banks A-I in the bank's own memory,
++// for the SDK's texture uploads of len bytes, which then leave the banks where they are (vram.c)
++void *host_vram_lcdc_direct(unsigned int dsaddr, unsigned int len);
+ 
+ #define HOST_MAIN_RAM_LO 0x02200000u
+ #define HOST_MAIN_RAM_HI 0x02400000u
+diff --git a/include/host_ptr32.h b/include/host_ptr32.h
+index 68447561..20066952 100644
+--- a/include/host_ptr32.h
++++ b/include/host_ptr32.h
+@@ -3,11 +3,11 @@
+ 
+ // A pointer in a 32-bit slot of the DS's data formats: the sound files' links (a bank's wave archives, a wave
+ // archive's banks, the address of a wave loaded on its own), which keep their file layout, so the slot stays 4 bytes.
+-// A pointer below HOST_PTR32_HANDLE is stored as itself (every pointer on a 32-bit host; DS memory); one above is
+-// stored as a handle >= HOST_PTR32_HANDLE: its index in a table of the pointers stored this way (modern/host/ptr32.c;
+-// each distinct pointer once, never released). Values below 0x02000000 in these slots are file offsets, as on the DS.
++// Values below 0x02000000 in these slots are file offsets, as on the DS. A pointer from 0x02000000 to below
++// HOST_PTR32_HANDLE is stored as itself (DS memory; a 32-bit PC's heap); any other (a 64-bit host's, the 3DS's
++// program and data from 0x00100000 on) as a handle >= HOST_PTR32_HANDLE: its index in a table of the pointers stored
++// this way (modern/host/ptr32.c; each distinct pointer once, never released).
+ // Self-contained (no includes): the game's units with their own basic types include it too.
+-#if __SIZEOF_POINTER__ == 8
+ #define HOST_PTR32_HANDLE 0xf0000000u
+ #ifdef __cplusplus
+ extern "C" {
+@@ -19,14 +19,10 @@ void *HostPtr32_Lookup(unsigned int handle);
+ #endif
+ static inline unsigned int HostPtr32_Of(const void *p) {
+     __UINTPTR_TYPE__ a = (__UINTPTR_TYPE__)p;
+-    return a < HOST_PTR32_HANDLE ? (unsigned int)a : HostPtr32_Handle(p);
++    return a == 0 || (a >= 0x02000000u && a < HOST_PTR32_HANDLE) ? (unsigned int)a : HostPtr32_Handle(p);
+ }
+ static inline void *HostPtr32_Get(unsigned int v) {
+     return v < HOST_PTR32_HANDLE ? (void *)(__UINTPTR_TYPE__)v : HostPtr32_Lookup(v);
+ }
+-#else
+-static inline unsigned int HostPtr32_Of(const void *p) { return (unsigned int)(__UINTPTR_TYPE__)p; }
+-static inline void *HostPtr32_Get(unsigned int v) { return (void *)(__UINTPTR_TYPE__)v; }
+-#endif
+ 
+ #endif
