@@ -74,10 +74,9 @@ game's pace; making it faster is what is being worked on.
 
 ### 1. Make the game's files
 
-**The easy way: the web builder.** Choose your ROM, press
+**The easy way: the web builder.** Go to [Here](https://toomium.github.io/acww-3ds/), choose your ROM, press
 **Build**, and download a ZIP laid out for the SD card. It all happens in your
-browser: your ROM is never uploaded. (The page is this repository's `web/`
-folder, published with each release.)
+browser: your ROM is never uploaded. )
 
 **Or build it yourself**, from the source:
 
