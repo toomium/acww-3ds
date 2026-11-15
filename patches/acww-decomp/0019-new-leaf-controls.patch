@@ -1,0 +1,127 @@
+From: acww-3ds <noreply@invalid>
+Subject: [PATCH] Player and menus: "New Leaf controls" (option ACWW_NL_CONTROLS)
+
+The 3DS port's option "New Leaf controls" (options_3ds.c, n3ds_options.h): Y picks up items and pulls weeds (B on
+the DS), so B only runs; X opens the pockets (Y on the DS) and closes them again; the map has no key then. Off, the
+keys are the DS's.
+---
+ src/main/unk_02004558_extra.cpp  |  8 ++++++++
+ src/main/unk_0206e54c.cpp        | 12 ++++++++++++
+ src/ov099/unk_ov099_02294c40.cpp |  7 +++++++
+ src/ov103/unk_ov103_02294c40.cpp |  7 +++++++
+ 4 files changed, 34 insertions(+)
+
+diff --git a/src/main/unk_02004558_extra.cpp b/src/main/unk_02004558_extra.cpp
+index f4550db..c518a99 100644
+--- a/src/main/unk_02004558_extra.cpp
++++ b/src/main/unk_02004558_extra.cpp
+@@ -2,6 +2,9 @@
+ // The 14 functions of the translation unit 0x02004558-0x0201106c that only mwcc 1.2/base compiles
+ // to the original code (see unk_02004558.cpp; same declarations, nothing else is defined here).
+ #include "types.h"
++#ifdef N3DS_PORT
++#include "n3ds_options.h"
++#endif
+ #ifdef HOST
+ #include "host_input.h"
+ #endif
+@@ -913,7 +916,12 @@ void PlayerActor::readInput() {
+                 v10 = 1;
+             } else {
+                 v10 = 0;
++#ifdef N3DS_PORT
++                // B on the DS, Y with "New Leaf controls" (n3ds_options.h): picking up, pulling weeds
++                if (gPad.trig & n3ds_key_pick_up()) {
++#else
+                 if (gPad.trig & 2) {
++#endif
+                     v14 = 1;
+                     PlayerActor_OffsetByAngle(&r5c, this, &this->position, &this->rotY, &data_020d5e48);
+                 }
+diff --git a/src/main/unk_0206e54c.cpp b/src/main/unk_0206e54c.cpp
+index 732fade..af24c8c 100644
+--- a/src/main/unk_0206e54c.cpp
++++ b/src/main/unk_0206e54c.cpp
+@@ -1,5 +1,8 @@
+ #include "uptr.h"
+ #include "types.h"
++#ifdef N3DS_PORT
++#include "n3ds_options.h"
++#endif
+ #include "menu/MenuProc.h"
+ #include "sys/ListNode.h"
+ #include "Unk_020d8c7c.h"
+@@ -228,13 +231,22 @@ BOOL MenuManager::onExecute() {
+             MenuCtrl_SetButtons();
+             return TRUE;
+         }
++#ifdef N3DS_PORT
++        // the pockets: Y on the DS, X with "New Leaf controls" (n3ds_options.h), which leaves the map without a key
++        if (k & n3ds_key_pockets()) {
++#else
+         if (k & 0x800) {
++#endif
+             TalkRequest_AddMenu(0);
+             sMenuMode = 0;
+             MenuCtrl_SetButtons();
+             return TRUE;
+         }
++#ifdef N3DS_PORT
++        if (!n3ds_new_leaf_controls() && Hud_GetSceneHudKind() != 2 && (gPad[1] & 0x400)) {
++#else
+         if (Hud_GetSceneHudKind() != 2 && (gPad[1] & 0x400)) {
++#endif
+             TalkRequest_AddMenu(0);
+             sMenuMode = 5;
+             MenuCtrl_SetButtons();
+diff --git a/src/ov099/unk_ov099_02294c40.cpp b/src/ov099/unk_ov099_02294c40.cpp
+index 835def6..2f46321 100644
+--- a/src/ov099/unk_ov099_02294c40.cpp
++++ b/src/ov099/unk_ov099_02294c40.cpp
+@@ -1,5 +1,8 @@
+ // ov099: scene overlay (class PocketMenuUnk, vtable 0x02296b00, 0x2794 bytes).
+ #include "types.h"
++#ifdef N3DS_PORT
++#include "n3ds_options.h"
++#endif
+ #include "host_shared_calls.h"
+ #include "Unk_020d8c7c.h"
+ #include "ui/CursorMotion.h"
+@@ -332,7 +335,11 @@ void PocketMenuUnk::mainAct04() {
+             }
+         }
+     } else {
++#ifdef N3DS_PORT
++        if ((gPad[1] & n3ds_key_pockets()) != 0) {  // (the key that opened the pockets, n3ds_options.h)
++#else
+         if ((gPad[1] & 0x800) != 0) {
++#endif
+             transitionState = 3;
+             setPhase(1);
+             nameBalloon.hide(1);
+diff --git a/src/ov103/unk_ov103_02294c40.cpp b/src/ov103/unk_ov103_02294c40.cpp
+index 662180c..2535aa7 100644
+--- a/src/ov103/unk_ov103_02294c40.cpp
++++ b/src/ov103/unk_ov103_02294c40.cpp
+@@ -1,5 +1,8 @@
+ // ov103: scene overlay (class PocketLettersMenu, vtable 0x02296da0, 0x2b04 bytes). Linked unit.
+ #include "types.h"
++#ifdef N3DS_PORT
++#include "n3ds_options.h"
++#endif
+ #include "host_shared_calls.h"
+ #include "Unk_020d8c7c.h"
+ #include "ui/CursorMotion.h"
+@@ -613,7 +616,11 @@ void PocketLettersMenu::mainAct05() {
+             }
+         }
+     } else {
++#ifdef N3DS_PORT
++        if ((gPad[1] & n3ds_key_pockets()) != 0) {  // (the key that opened the pockets, n3ds_options.h)
++#else
+         if ((gPad[1] & 0x800) != 0) {
++#endif
+             transitionState = 3;
+             setPhase(1);
+             nameBalloon.hide(1);
+

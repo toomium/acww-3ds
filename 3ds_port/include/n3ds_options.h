@@ -21,6 +21,11 @@ unsigned char *InventoryItemGrid_StackIcon(unsigned char *src, unsigned item, un
 // the name tables are the EUR ROM's (ACWW_LANG, modern/ds/n3ds_lang.c): a name's record has a third byte before the
 // name, its grammatical form (0xff none), and the furniture's records are 0x20 bytes instead of 0x1c
 int N3ds_LangEur(void);
+// "New Leaf controls" switched on: Y picks up and pulls weeds (B on the DS), B only runs, X opens the pockets (Y on the
+// DS) and the map has no key (its touch button stays)
+int n3ds_new_leaf_controls(void);
+static inline unsigned n3ds_key_pick_up(void) { return n3ds_new_leaf_controls() ? 0x800 : 0x2; }   // Y : B
+static inline unsigned n3ds_key_pockets(void) { return n3ds_new_leaf_controls() ? 0x400 : 0x800; } // X : Y
 
 #ifdef __cplusplus
 }
