@@ -121,6 +121,10 @@ void host_plat_init(void) {
     // the Old 3DS's one slow core: the screens drawn only when the game has a new picture, every third frame in town
     // (render.c: ACWW_FRAMESKIP=sync; ACWW_FRAMESKIP=0 in acww.cfg draws every frame as before)
     if (!n3ds) setenv("ACWW_FRAMESKIP", "sync", 0);
+    // and the wide screens off there unless acww.cfg or the options page says: their 3D picture is 400 x 240 of a
+    // 512 x 256 target in place of 256 x 192 (twice the pixels for the GPU), the geometry engine keeps the polygons
+    // beyond the DS's screen, and the 2D layers' textures don't fit in VRAM beside it (pica_display.c)
+    if (!n3ds) setenv("ACWW_WIDE", "0", 0);
 #endif
     osSetSpeedupEnable(true);  // (the New 3DS: 804 MHz and its L2 cache instead of 268 MHz; nothing on the others)
     fprintf(stderr, "3ds: %s, application memory %lu KB (%lu KB free), heap %lu KB, linear heap %lu KB\n",
