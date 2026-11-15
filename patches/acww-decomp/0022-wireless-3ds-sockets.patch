@@ -1,0 +1,49 @@
+From: acww-3ds <noreply@invalid>
+Subject: [PATCH] Wireless: on the 3DS, the socket service and the network's broadcast address
+
+wm7.c carries the DS's local wireless in UDP datagrams. On the 3DS the socket service (soc:U) has to be started
+first (plat_3ds.c n3ds_net_start, the first time the game turns its wireless on), and beacons also go to the Wi-Fi
+network's own broadcast address (n3ds_net_broadcast) besides 255.255.255.255.
+---
+ modern/host/wm7.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/modern/host/wm7.c b/modern/host/wm7.c
+index a54d5bc..6c87f13 100644
+--- a/modern/host/wm7.c
++++ b/modern/host/wm7.c
+@@ -53,6 +53,10 @@ typedef int sock_t;
+ #include "nitro/wm.h"
+ 
+ int pxi7_send_pointer(u32 tag, void *p);
++#ifdef __3DS__
++int n3ds_net_start(void);      // plat_3ds.c: the 3DS's socket service, started on first use (0: none)
++u32 n3ds_net_broadcast(void);  // plat_3ds.c: the Wi-Fi network's own broadcast address (network order; 0: none)
++#endif
+ 
+ #define MS(n) ((u64)(n) * 33514u)  // virtual cycles (the ARM9 bus clock, 33.514 MHz)
+ #define FRAME_CYCLES (2130u * 263u)
+@@ -199,6 +203,9 @@ static void net_open(void) {
+ #ifdef _WIN32
+     static int started;
+     if (!started) { WSADATA d; if (WSAStartup(MAKEWORD(2, 2), &d)) return; started = 1; }
++#endif
++#ifdef __3DS__
++    if (!n3ds_net_start()) return;  // (the reason is in the log)
+ #endif
+     sSock = socket(AF_INET, SOCK_DGRAM, 0);
+     if (sSock == BAD_SOCK) { fprintf(stderr, "wm7: no UDP socket: no wireless\n"); return; }
+@@ -281,6 +288,10 @@ static void send_everywhere(u32 length) {  // every copy on the machine and the
+         send_to(&a, length);
+         a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+         send_to(&a, length);
++#ifdef __3DS__  // (and the network's own broadcast address: a 3DS's 255.255.255.255 doesn't reach every network)
++        u32 b = n3ds_net_broadcast();
++        if (b && b != htonl(INADDR_BROADCAST)) a.sin_addr.s_addr = b, send_to(&a, length);
++#endif
+     }
+     for (int i = 0; i < sPeerCount; i++) send_to(&sPeers[i], length);
+     u64 now = host_plat_time_ns();
+-- 
+2.43.0
+

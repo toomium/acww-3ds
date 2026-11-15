@@ -44,7 +44,7 @@ sound on its DSP, the save and the ROM on the SD card.
 | :--- | :--- | :--- |
 | Playable on a New 3DS and in Azahar: the town, the houses, the menus, saving | The Old 3DS: it runs, slower than the game should (see below) | Stereoscopic 3D |
 | Wide screens, the options page, the Circle Pad | 60 frames a second everywhere; a HOME Menu version (`.cia`: the web builder puts the icon from your ROM on it; the banner is a placeholder) | |
-| Sound, the save file, the touch screen | Languages other than German tested | Wireless play |
+| Sound, the save file, the touch screen | Languages other than German tested; [visiting another town](#visiting-another-town) over Wi-Fi, not yet tried on consoles | Nintendo Wi-Fi Connection |
 
 On an **Old 3DS** the game currently runs at about three fifths of its speed in
 town. `ACWW_FRAMESKIP=auto` in `acww.cfg` lets it leave pictures out to keep the
@@ -126,6 +126,27 @@ lines that can also be edited by hand:
 
 Stacked fruit uses item codes the DS game doesn't have: a save with stacks in
 it belongs to this port.
+
+### Visiting another town
+
+The DS's local wireless play (the gate: inviting a friend or visiting their
+town) goes over the 3DS's own Wi-Fi connection: the consoles must be connected
+to the same network in System Settings, and run the same version of the port.
+The radio's traffic is UDP on ports 31470-31477; each console finds the others
+on the network by itself. As on the DS, the gate opens only after Nook's
+part-time job.
+
+| Option | Default | Meaning |
+| :--- | :--- | :--- |
+| `ACWW_NET_PEER` | | `host[:port]`: the host's address, for a town that isn't on the same network (the host's port, 31470 by default, forwarded to it) |
+| `ACWW_NET_LAN` | `1` | `0`: no beacons on the local network, only to `ACWW_NET_PEER` |
+| `ACWW_MAC` | the console's | `xx:xx:xx:xx:xx:xx`: how the game tells the players apart; made from the console's ID, so set it in one of two Azahar windows that share one |
+| `ACWW_WM_LOG` | `0` | `1`: the wireless traffic in `log.txt` once a second, `2`: every packet |
+
+A 3DS doesn't play with the 64-bit PC build (the copies exchange data laid out
+differently). If the connection breaks, the game resets as on the DS, which on
+the 3DS ends the program (back to the Homebrew Launcher; the save is written first). Nintendo Wi-Fi Connection (playing over the internet
+through Nintendo's servers, which are gone) isn't supported.
 
 > [!TIP]
 > **Need help?** Open an issue, and include your console or emulator and
@@ -214,8 +235,9 @@ build/             everything fetched and built; never committed
 - **Done:** the game's code built and running on the 3DS; 2D, 3D, sound,
   input, saving; the wide screens; the options page; the Circle Pad; stacked
   fruit; languages from the European version.
-- **Work in progress:** the Old 3DS's speed, 60 frames a second everywhere.
-- **Future wishlist:** stereoscopic 3D, wireless play.
+- **Work in progress:** the Old 3DS's speed, 60 frames a second everywhere;
+  visiting another town over Wi-Fi.
+- **Future wishlist:** stereoscopic 3D, Nintendo Wi-Fi Connection.
 
 ### Contributing
 
