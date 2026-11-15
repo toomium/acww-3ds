@@ -1,0 +1,80 @@
+From: acww-3ds <noreply@invalid>
+Subject: [PATCH] Renderer 2D: the main screen kept on top (option ACWW_MAIN_TOP)
+
+The 3DS port's option "Main screen on top" (options_3ds.c): while engine A shows the 3D, it stays on the top screen
+whatever POWCNT1 bit 15 says, so the town and the rooms don't change screens when the pause menu opens.
+---
+ modern/host/gpu2d/gpu2d.c | 28 +++++++++++++++++++++++-----
+ 1 file changed, 23 insertions(+), 5 deletions(-)
+
+diff --git a/modern/host/gpu2d/gpu2d.c b/modern/host/gpu2d/gpu2d.c
+index fc75b53..16c6a96 100644
+--- a/modern/host/gpu2d/gpu2d.c
++++ b/modern/host/gpu2d/gpu2d.c
+@@ -25,6 +25,24 @@ static int sDiagnostics;  // keep what gpu2d_describe_pixel reports
+ 
+ void gpu2d_set_diagnostics(int on) { sDiagnostics = on; }
+ 
++// The engine on the top screen: engine A if POWCNT1 bit 15 is set, else engine B. The 3DS port's option "Main screen
++// on top" (options_3ds.c, ACWW_MAIN_TOP) keeps engine A there while it shows the 3D (DISPCNT bit 3: the town, the
++// rooms), so the world stays on the top screen and doesn't change screens when the pause menu opens; screens with
++// only 2D on engine A (the title, the letters' keyboard) keep the game's choice, their touch UI on the touch screen.
++#ifdef N3DS_PORT
++int opt_main_top(void);  // options_3ds.c
++static int sMainTopForced;
++int gpu2d_main_top_forced(void) { return sMainTopForced; }
++#endif
++static int top_engine(void) {
++    int top = (sPowCnt & 0x8000) ? 0 : 1;
++#ifdef N3DS_PORT
++    sMainTopForced = top == 1 && opt_main_top() && (reg32(&sEngine[0], REG_DISPCNT) & 8);
++    if (sMainTopForced) top = 0;
++#endif
++    return top;
++}
++
+ // ---- features seen: the frame each was first seen in, + 1 (0: not yet)
+ static u32 sFeatureFrame[2][F_COUNT];
+ static const char *const kFeatureNames[F_COUNT] = {
+@@ -827,7 +845,7 @@ static void record_end(const Gpu2dFrameInput *in) {
+         r->bgMask[n] = e->bgMask, r->objMask[n] = e->objMask;
+     }
+     memcpy(r->final, sShadow, sizeof r->final);
+-    r->topEngine = (sPowCnt & 0x8000) ? 0 : 1;
++    r->topEngine = top_engine();
+ }
+ 
+ void gpu2d_draw_layers(int record) {
+@@ -957,7 +975,7 @@ void gpu2d_render_frame(const Gpu2dFrameInput *in) {
+         return;
+     }
+     if (sLayers) {
+-        sLayers->topEngine = (sPowCnt & 0x8000) ? 0 : 1;
++        sLayers->topEngine = top_engine();
+         for (int n = 0; n < 2; n++) {
+             sLayers->bgGran[n] = sEngine[n].bgGran;
+             sLayers->bgMask[n] = sEngine[n].bgMask;
+@@ -966,9 +984,9 @@ void gpu2d_render_frame(const Gpu2dFrameInput *in) {
+         sFrame++;
+         return;
+     }
+-    if (sGpu) sGpuFrame.tables[0][G2T_SCREEN_A] = (sPowCnt & 0x8000) ? 0 : 1;
++    if (sGpu) sGpuFrame.tables[0][G2T_SCREEN_A] = top_engine();
+     for (int n = 0; n < 2; n++) {
+-        int screen = (sPowCnt & 0x8000) ? n : 1 - n;
++        int screen = top_engine() == 0 ? n : 1 - n;
+         if (sGpu == 1) {  // (the pictures are the GPU's: the lines' master brightness and 3D scroll only)
+             memcpy(sDeferredLines[screen], sEngine[n].lineInfo, sizeof sEngine[n].lineInfo);
+             continue;
+@@ -996,7 +1014,7 @@ const uint32_t *gpu2d_deferred(int screen) { return sDeferred[screen & 1]; }
+ const uint32_t *gpu2d_deferred_lines(int screen) { return sDeferredLines[screen & 1]; }
+ 
+ void gpu2d_describe_pixel(int screen, int x, int y, char *buf, size_t size) {
+-    int n = (sPowCnt & 0x8000) ? screen : 1 - screen;
++    int n = top_engine() == 0 ? screen : 1 - screen;
+     const Engine *e = &sEngine[n];
+     static const char *const kLayer[8] = {"BG0", "BG1", "BG2", "BG3", "OBJ", "backdrop", "3D", "none"};
+     static const char *const kEffect[7] = {"none", "alpha", "brightness up", "brightness down",
+-- 
+2.43.0
+
