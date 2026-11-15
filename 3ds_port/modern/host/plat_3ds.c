@@ -118,6 +118,9 @@ void host_plat_init(void) {
     APT_CheckNew3DS(&n3ds);
 #ifdef N3DS_PORT  // (the pictures between cost an Old 3DS about 17 ms a frame: off unless acww.cfg says)
     if (!n3ds) setenv("ACWW_PICA_INTERP", "0", 0);
+    // the Old 3DS's one slow core: the screens drawn only when the game has a new picture, every third frame in town
+    // (render.c: ACWW_FRAMESKIP=sync; ACWW_FRAMESKIP=0 in acww.cfg draws every frame as before)
+    if (!n3ds) setenv("ACWW_FRAMESKIP", "sync", 0);
 #endif
     osSetSpeedupEnable(true);  // (the New 3DS: 804 MHz and its L2 cache instead of 268 MHz; nothing on the others)
     fprintf(stderr, "3ds: %s, application memory %lu KB (%lu KB free), heap %lu KB, linear heap %lu KB\n",

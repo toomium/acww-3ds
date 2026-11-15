@@ -1,0 +1,79 @@
+From: acww-3ds <noreply@invalid>
+Subject: [PATCH] VRAM: the 2D renderer reads the CPU's windows, not a copy of them (ACWW_VRAM_VIEW)
+
+host_vram_flush copied every granule of the CPU's VRAM windows into its bank each frame, changed or not: about
+half a megabyte in town. host_vram_bank_view gives the window's own memory for a bank that shows whole in a
+window, and the bank with its granules written back for the others. The port's default; ACWW_VRAM_VIEW=1 tries it
+in the other builds, =0 turns it off.
+---
+ modern/host/render.c | 17 +++++++++++++++--
+ modern/host/vram.c   | 19 +++++++++++++++++++
+ 2 files changed, 34 insertions(+), 2 deletions(-)
+
+diff --git a/modern/host/render.c b/modern/host/render.c
+index b04878f..a448ab4 100644
+--- a/modern/host/render.c
++++ b/modern/host/render.c
+@@ -67,6 +67,7 @@ int melon_3d_poly_get(int i, Gpu3dVertexOut *v, uint32_t *attr, uint32_t *texpar
+ int host_hblank(int line);
+ // vram.c
+ u8 *host_vram_bank(int i);
++const u8 *host_vram_bank_view(int i);
+ void host_vram_flush(void);
+ 
+ static int sOwn;          // the own 2D renderer's pictures on the screens
+@@ -689,10 +690,22 @@ void render_frame(void) {
+     HOST_PROF(PROF_2D);
+     if (sPica) pdisp_wait(PDISP_COMP, 1);  // (the 2D renderer records into the record that compositing drew)
+     u64 t0 = host_plat_time_ns();
+-    if (sGpu2d || sGpu3d) host_vram_flush();
++    // ACWW_VRAM_VIEW (the port's default; 1 elsewhere to try it, 0 off): the 2D renderer reads the banks the CPU sees
++    // where the CPU writes them, the windows, in place of a copy of every window into its bank each frame
++    // (vram.c host_vram_bank_view). The 3D engine's banks, the texture slots, aren't in the windows.
++    static int view = -1;
++    if (view < 0) {
++#ifdef N3DS_PORT
++        view = !getenv("ACWW_VRAM_VIEW") || atoi(getenv("ACWW_VRAM_VIEW"));
++#else
++        view = getenv("ACWW_VRAM_VIEW") && atoi(getenv("ACWW_VRAM_VIEW"));
++#endif
++        if (sMelon || sCompare || !sGpu2d) view = 0;  // (melonDS and the comparisons read the banks themselves)
++    }
++    if ((sGpu2d || sGpu3d) && !view) host_vram_flush();
+     if (sGpu2d) {
+         Gpu2dFrameInput in;
+-        for (int i = 0; i < 9; i++) in.bank[i] = host_vram_bank(i);
++        for (int i = 0; i < 9; i++) in.bank[i] = view ? host_vram_bank_view(i) : host_vram_bank(i);
+         in.palette = gHostPltt;
+         in.oam = gHostOam;
+         in.lines3d = lines3d;
+diff --git a/modern/host/vram.c b/modern/host/vram.c
+index cecd03f..954bd43 100644
+--- a/modern/host/vram.c
++++ b/modern/host/vram.c
+@@ -112,6 +112,25 @@ void host_vram_flush(void) {
+         if (sGran[g].bank >= 0) memcpy(sBanks + sOffset[sGran[g].bank] + sGran[g].off, sGran[g].win, GRANULE);
+ }
+ 
++// A bank as the renderer reads it without host_vram_flush (render.c, ACWW_VRAM_VIEW): where the whole bank shows in
++// a window - every granule of it, in a row, none covered by a later bank - the window's own memory, which is what
++// the bank will hold after the next flush; else the bank's memory, the granules of it that do show written back
++// first. A bank the CPU can't see (textures, palettes) is its own memory as it is. The flush copied every granule
++// in the windows each frame, changed or not: about half a megabyte in town.
++const u8 *host_vram_bank_view(int i) {
++    u8 *bank = sBanks + sOffset[i];
++    u32 a = bank_address(i, sCnt[i]);
++    int g0 = a ? granule(a) : -1, whole = g0 >= 0;
++    for (u32 off = 0; whole && off < kSize[i]; off += GRANULE) {
++        int g = g0 + (int)(off / GRANULE);
++        whole = g < NGRAN && sGran[g].bank == i && sGran[g].off == off && sGran[g].win == sGran[g0].win + off;
++    }
++    if (whole) return sGran[g0].win;
++    for (int g = 0; g < NGRAN; g++)
++        if (sGran[g].bank == i) memcpy(bank + sGran[g].off, sGran[g].win, GRANULE);
++    return bank;
++}
++
+ // bumped at every remap: the banks the CPU can't see (textures, texture palettes...) change only then
+ static u32 sGeneration;
+ u32 host_vram_generation(void) { return sGeneration; }

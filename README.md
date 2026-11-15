@@ -46,9 +46,11 @@ sound on its DSP, the save and the ROM on the SD card.
 | Wide screens, the options page, the Circle Pad | 60 frames a second everywhere; a HOME Menu version (`.cia`: the web builder puts the icon from your ROM on it; the banner is a placeholder) | |
 | Sound, the save file, the touch screen | Languages other than German tested | Wireless play |
 
-On an **Old 3DS** the game currently runs at about three fifths of its speed in
-town. `ACWW_FRAMESKIP=auto` in `acww.cfg` lets it leave pictures out to keep the
-game's pace; making it faster is what is being worked on.
+On an **Old 3DS** the game ran at about three fifths of its speed in town. It
+now draws the screens only when the game has a new picture (every third frame in
+town; `ACWW_FRAMESKIP=sync`, the Old 3DS's default), which has not been measured
+on a console yet. `ACWW_FRAMESKIP=0` in `acww.cfg` draws every frame as before,
+`ACWW_FRAMESKIP=auto` leaves pictures out only when the game falls behind.
 
 > [!IMPORTANT]
 > **This repository contains no game content.** No ROM, graphics, music,
