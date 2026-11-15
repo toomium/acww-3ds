@@ -1,0 +1,104 @@
+From: acww-3ds <noreply@invalid>
+Subject: [PATCH] Render driver: ACWW_FRAMESKIP=sync, the screens drawn at the game's pace
+
+The game makes a 3D picture every third frame and changes its 2D with it; the screens were drawn in all three.
+With ACWW_FRAMESKIP=sync only the frame after a swap of the 3D engine is drawn, the one that shows the new
+picture; with no swap for more than three frames (no 3D) every frame is drawn again. Not while the port draws
+the pictures between the game's (ACWW_PICA_INTERP): they are shown in the frames this would leave out. The Old
+3DS's default (plat_3ds.c, the port's file).
+---
+ modern/host/gpu3d/gpu3d.h      |  1 +
+ modern/host/gpu3d/gpu3d_geom.c |  1 +
+ modern/host/render.c           | 30 ++++++++++++++++++++++++++++++
+ 3 files changed, 32 insertions(+)
+
+diff --git a/modern/host/gpu3d/gpu3d.h b/modern/host/gpu3d/gpu3d.h
+index 197e2e4..152d472 100644
+--- a/modern/host/gpu3d/gpu3d.h
++++ b/modern/host/gpu3d/gpu3d.h
+@@ -45,6 +45,7 @@ void gpu3d_frame(const uint8_t *const bank[9]);
+ void gpu3d_vram_generation(uint32_t generation);
+ // 0: gpu3d_frame runs the geometry engine's frame but doesn't draw the picture (a frame the screens skip)
+ void gpu3d_set_raster(int on);
++uint32_t gpu3d_swaps(void);  // the swaps so far: a new one, a new 3D picture (ACWW_FRAMESKIP=sync)
+ // The wide view (the 3DS's ACWW_WIDE=1, an experiment): polygons kept beyond the DS's screen, clipped at a picture of
+ // (256 + 2 * GPU3D_WIDE_X) x (192 + 2 * GPU3D_WIDE_Y) with the DS's in its middle; their screen positions (hx, hy)
+ // then not wrapped (negative in the margins). Only for a renderer that draws them there (gpu3d_pica.c's).
+diff --git a/modern/host/gpu3d/gpu3d_geom.c b/modern/host/gpu3d/gpu3d_geom.c
+index 003c157..c0994c4 100644
+--- a/modern/host/gpu3d/gpu3d_geom.c
++++ b/modern/host/gpu3d/gpu3d_geom.c
+@@ -72,6 +72,7 @@ u32 gG3Swaps;
+ void gpu3d_vram_generation(uint32_t generation) { gG3VramGeneration = generation; }
+ static int sRaster = 1;
+ void gpu3d_set_raster(int on) { sRaster = on; }
++uint32_t gpu3d_swaps(void) { return gG3Swaps; }
+ // the wide view: the x and y clip planes at +-num/den w (1/1: the DS's)
+ static int sWide;
+ static s64 sClipNum[3] = {1, 1, 1}, sClipDen[3] = {1, 1, 1};
+diff --git a/modern/host/render.c b/modern/host/render.c
+index 9ca7e8b..8ba0a1a 100644
+--- a/modern/host/render.c
++++ b/modern/host/render.c
+@@ -587,6 +587,7 @@ int render_check_gpu2d(void) {
+ static u64 sTime2d, sTime3d, sTimeComp;
+ static int sSkipMax = -1;  // ACWW_FRAMESKIP=auto's n (frameskip() below); -1: not auto
+ static unsigned long sSkipCount;  // (the frames' pictures it left out)
++static int sSkipSync;  // ACWW_FRAMESKIP=sync (frameskip() below)
+ static void render_timing(u64 t0, u64 t1, u64 t2, u64 t3) {
+     static int on = -1;
+     if (on < 0) on = getenv("ACWW_FPS") != 0;
+@@ -597,6 +598,7 @@ static void render_timing(u64 t0, u64 t1, u64 t2, u64 t3) {
+                 (unsigned long long)host_frame(), (double)sTime2d / 120e6, (double)sTime3d / 120e6,
+                 (double)sTimeComp / 120e6);
+         if (sSkipMax > 0) fprintf(stderr, "render: ACWW_FRAMESKIP=auto has left out %lu frames' pictures\n", sSkipCount);
++        if (sSkipSync) fprintf(stderr, "render: ACWW_FRAMESKIP=sync has left out %lu frames' pictures\n", sSkipCount);
+         sTime2d = sTime3d = sTimeComp = 0;
+     }
+ }
+@@ -613,10 +615,22 @@ static int render_hblank(int line, void *context) {
+ // ACWW_FRAMESKIP=auto (or auto<n>): the game keeps its speed where it can: a frame that ends more than a frame behind
+ // its time has the next one's pictures left out, at most n in a row (5: with the game's picture every third frame,
+ // every second one is still shown). Not the same from run to run: it goes by the real time.
++// ACWW_FRAMESKIP=sync (the Old 3DS's default: plat_3ds.c): the screens drawn at the game's own pace. The game makes a
++// 3D picture every third frame (gVBlanksPerFrame = 3) and changes its 2D with it, so two frames of three show what
++// the one before did: only the frame after a swap of the 3D engine is drawn, the one that shows the new picture.
++// With no swap for more than SYNC_IDLE frames (no 3D: the title, a menu over a still picture, a load) every frame is
++// drawn again. The same from run to run: it goes by the swaps, not by the time. A 2D change the game makes between
++// two swaps shows with the next one. Not while the port draws the pictures between the game's (ACWW_PICA_INTERP,
++// the options page's "60 fps"): those are shown in the frames this would leave out, so every frame is drawn then.
++enum { SYNC_IDLE = 3 };
+ static int frameskip(void) {
+     static int n = -1;
+     if (n < 0) {
+         const char *e = getenv("ACWW_FRAMESKIP");
++        if (e && !strcmp(e, "sync")) {
++            sSkipSync = 1;
++            return n = 0;
++        }
+         if (e && !strncmp(e, "auto", 4)) {
+             sSkipMax = e[4] ? atoi(e + 4) : 5;
+             if (sSkipMax < 1) sSkipMax = 1;
+@@ -643,6 +657,22 @@ void render_frame(void) {
+         skipped = drawThis ? 0 : skipped + 1;
+         sSkipCount += !drawThis;
+     }
++    int sync = sSkipSync && sOwn3d;
++#ifdef N3DS_PORT  // (the pictures between: on unless ACWW_PICA_INTERP=0, changed by the options page as the game runs)
++    if (sync && (!getenv("ACWW_PICA_INTERP") || atoi(getenv("ACWW_PICA_INTERP")))) sync = 0;
++#endif
++    if (sync) {
++        // (the swap is done in gpu3d_run_frame, at this function's end, and its picture drawn there: always, raster3d;
++        // the count is new in the frame after, which shows that picture)
++        static u32 seen;
++        static int since = SYNC_IDLE + 1;  // frames since the count was last new
++        u32 swaps = gpu3d_swaps();
++        if (swaps != seen) seen = swaps, since = 0;
++        else if (since <= SYNC_IDLE) since++;
++        draw2d = since == 0 || since > SYNC_IDLE;
++        raster3d = 1;
++        sSkipCount += !draw2d;
++    }
+     if (!draw2d && !sCompare && !sGpuDisplay) {
+         if (sOwn)
+             for (int line = 0; line < 192; line++) render_hblank(line, 0);
