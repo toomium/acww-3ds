@@ -124,7 +124,7 @@ lines that can also be edited by hand:
 | `ACWW_WIDE` | `1` (Old 3DS: `0`) | the wide screens (after a restart) |
 | `ACWW_STACK_FRUIT` | `0` | stacked fruit |
 | `ACWW_ANALOG` | `1` | the Circle Pad's angle and tilt (`0`: the D-pad's eight directions) |
-| `ACWW_FRAMESKIP` | `0` (Old 3DS: `sync`) | `sync`: the screens are drawn only when the game has a new picture; `auto`: pictures are left out when the console can't keep the game's pace |
+| `ACWW_FRAMESKIP` | `0` (Old 3DS: `sync`) | `sync`: the screens are drawn only when the game has a new picture (not with `ACWW_PICA_INTERP=1`, whose pictures between need every frame); `auto`: pictures are left out when the console can't keep the game's pace |
 | `ACWW_LANG` | | `ENG`, `FRN`, `GER`, `ITA` or `SPN`: that language's text... |
 | `ACWW_LANG_ROM` | | ...from the European ROM (`ADMP`) at this path, e.g. `sdmc:/3ds/acww/eur.nds` |
 

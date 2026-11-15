@@ -11,7 +11,7 @@ in the other builds, =0 turns it off.
  2 files changed, 34 insertions(+), 2 deletions(-)
 
 diff --git a/modern/host/render.c b/modern/host/render.c
-index b04878f..a448ab4 100644
+index 8ba0a1a..fcb8e8f 100644
 --- a/modern/host/render.c
 +++ b/modern/host/render.c
 @@ -67,6 +67,7 @@ int melon_3d_poly_get(int i, Gpu3dVertexOut *v, uint32_t *attr, uint32_t *texpar
@@ -22,7 +22,7 @@ index b04878f..a448ab4 100644
  void host_vram_flush(void);
  
  static int sOwn;          // the own 2D renderer's pictures on the screens
-@@ -689,10 +690,22 @@ void render_frame(void) {
+@@ -694,10 +695,22 @@ void render_frame(void) {
      HOST_PROF(PROF_2D);
      if (sPica) pdisp_wait(PDISP_COMP, 1);  // (the 2D renderer records into the record that compositing drew)
      u64 t0 = host_plat_time_ns();

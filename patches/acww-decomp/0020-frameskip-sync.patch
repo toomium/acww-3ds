@@ -3,13 +3,14 @@ Subject: [PATCH] Render driver: ACWW_FRAMESKIP=sync, the screens drawn at the ga
 
 The game makes a 3D picture every third frame and changes its 2D with it; the screens were drawn in all three.
 With ACWW_FRAMESKIP=sync only the frame after a swap of the 3D engine is drawn, the one that shows the new
-picture; with no swap for more than three frames (no 3D) every frame is drawn again. The Old 3DS's default
-(plat_3ds.c, the port's file).
+picture; with no swap for more than three frames (no 3D) every frame is drawn again. Not while the port draws
+the pictures between the game's (ACWW_PICA_INTERP): they are shown in the frames this would leave out. The Old
+3DS's default (plat_3ds.c, the port's file).
 ---
  modern/host/gpu3d/gpu3d.h      |  1 +
  modern/host/gpu3d/gpu3d_geom.c |  1 +
- modern/host/render.c           | 25 +++++++++++++++++++++++++
- 3 files changed, 27 insertions(+)
+ modern/host/render.c           | 30 ++++++++++++++++++++++++++++++
+ 3 files changed, 32 insertions(+)
 
 diff --git a/modern/host/gpu3d/gpu3d.h b/modern/host/gpu3d/gpu3d.h
 index 197e2e4..152d472 100644
@@ -36,7 +37,7 @@ index 003c157..c0994c4 100644
  static int sWide;
  static s64 sClipNum[3] = {1, 1, 1}, sClipDen[3] = {1, 1, 1};
 diff --git a/modern/host/render.c b/modern/host/render.c
-index 9ca7e8b..b04878f 100644
+index 9ca7e8b..8ba0a1a 100644
 --- a/modern/host/render.c
 +++ b/modern/host/render.c
 @@ -587,6 +587,7 @@ int render_check_gpu2d(void) {
@@ -55,7 +56,7 @@ index 9ca7e8b..b04878f 100644
          sTime2d = sTime3d = sTimeComp = 0;
      }
  }
-@@ -613,10 +615,21 @@ static int render_hblank(int line, void *context) {
+@@ -613,10 +615,22 @@ static int render_hblank(int line, void *context) {
  // ACWW_FRAMESKIP=auto (or auto<n>): the game keeps its speed where it can: a frame that ends more than a frame behind
  // its time has the next one's pictures left out, at most n in a row (5: with the game's picture every third frame,
  // every second one is still shown). Not the same from run to run: it goes by the real time.
@@ -64,7 +65,8 @@ index 9ca7e8b..b04878f 100644
 +// the one before did: only the frame after a swap of the 3D engine is drawn, the one that shows the new picture.
 +// With no swap for more than SYNC_IDLE frames (no 3D: the title, a menu over a still picture, a load) every frame is
 +// drawn again. The same from run to run: it goes by the swaps, not by the time. A 2D change the game makes between
-+// two swaps shows with the next one.
++// two swaps shows with the next one. Not while the port draws the pictures between the game's (ACWW_PICA_INTERP,
++// the options page's "60 fps"): those are shown in the frames this would leave out, so every frame is drawn then.
 +enum { SYNC_IDLE = 3 };
  static int frameskip(void) {
      static int n = -1;
@@ -77,11 +79,15 @@ index 9ca7e8b..b04878f 100644
          if (e && !strncmp(e, "auto", 4)) {
              sSkipMax = e[4] ? atoi(e + 4) : 5;
              if (sSkipMax < 1) sSkipMax = 1;
-@@ -643,6 +656,18 @@ void render_frame(void) {
+@@ -643,6 +657,22 @@ void render_frame(void) {
          skipped = drawThis ? 0 : skipped + 1;
          sSkipCount += !drawThis;
      }
-+    if (sSkipSync && sOwn3d) {
++    int sync = sSkipSync && sOwn3d;
++#ifdef N3DS_PORT  // (the pictures between: on unless ACWW_PICA_INTERP=0, changed by the options page as the game runs)
++    if (sync && (!getenv("ACWW_PICA_INTERP") || atoi(getenv("ACWW_PICA_INTERP")))) sync = 0;
++#endif
++    if (sync) {
 +        // (the swap is done in gpu3d_run_frame, at this function's end, and its picture drawn there: always, raster3d;
 +        // the count is new in the frame after, which shows that picture)
 +        static u32 seen;
