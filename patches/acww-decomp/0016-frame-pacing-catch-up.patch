@@ -1,0 +1,28 @@
+From: acww-3ds <noreply@invalid>
+Subject: [PATCH] Frame pacing: on the 3DS, catch up at most two frames
+
+host_pace_frame caught up on time lost up to a second behind, running the frames back to back. A New 3DS is fast
+enough to after a slow frame or a file read, and the game was seen to run faster than 60 frames a second. On the
+3DS the pacing now lets go of anything more than two frames behind; the PC builds pace as before.
+---
+ modern/host/hw.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/modern/host/hw.c b/modern/host/hw.c
+index 0868ccb..fddab55 100644
+--- a/modern/host/hw.c
++++ b/modern/host/hw.c
+@@ -192,6 +192,13 @@ static void host_pace_frame(void) {
+     sNextFrame += 16715000;                                  // 59.83 Hz
+     if (now > sNextFrame + 1000000000u) sNextFrame = now;  // far behind: don't try to catch up
+     sLateMs = now > sNextFrame ? (int)((now - sNextFrame) / 1000000) : 0;
++#ifdef N3DS_PORT
++    // more than two frames behind: the rest is let go. Catching up runs the frames back to back, faster than 60 a
++    // second: a New 3DS is fast enough to, after a slow frame or a file read, and the game is seen to speed up for up
++    // to a second. Two frames' slack still smooths the frames' unequal lengths, and ACWW_FRAMESKIP=auto (render.c)
++    // still sees a frame more than 16 ms late (sLateMs: before this).
++    if (now > sNextFrame + 2 * 16715000u) sNextFrame = now - 2 * 16715000u;
++#endif
+     host_plat_sleep_until_ns(sNextFrame);
+ }
+ 
