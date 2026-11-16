@@ -35,6 +35,7 @@ sound on its DSP, the save and the ROM on the SD card.
 | **Analog Circle Pad** | The player walks in any direction, not only the D-pad's eight, and as fast as the Circle Pad is tilted. |
 | **An options page** | A new tab in the pause menu, left of the pockets: L from the pockets, or touch its button. Its settings are kept in `acww.cfg`. |
 | **Stacked fruit** | Optional, off by default: up to 9 of a fruit in one pocket slot. |
+| **New Leaf controls** | Optional, off by default: Y picks up items and pulls weeds, B only runs, X opens the pockets. |
 | **Other languages** | English, French, German, Italian or Spanish text, taken from your own copy of the European version. Only German has been tested so far. |
 | **Built from your own cartridge** | The game's data comes from your own dump. No game content is distributed. |
 
@@ -120,6 +121,7 @@ lines that can also be edited by hand:
 | `ACWW_WIDE` | `1` | the wide screens (after a restart) |
 | `ACWW_MAIN_TOP` | `0` | the town and the rooms always on the upper screen: the pause menu opens and closes on the lower screen alone, over the sky (the touch screen then shows the sky and takes no touches there) |
 | `ACWW_STACK_FRUIT` | `0` | stacked fruit |
+| `ACWW_NL_CONTROLS` | `0` | New Leaf controls: Y picks up items and pulls weeds, B only runs, X opens the pockets instead of the map |
 | `ACWW_ANALOG` | `1` | the Circle Pad's angle and tilt (`0`: the D-pad's eight directions) |
 | `ACWW_FRAMESKIP` | `0` | `auto`: pictures are left out when the console can't keep the game's pace |
 | `ACWW_LANG` | | `ENG`, `FRN`, `GER`, `ITA` or `SPN`: that language's text... |

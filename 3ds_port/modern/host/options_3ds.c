@@ -24,6 +24,7 @@ static Option sOpts[] = {
     {"Game", "Wide screen", "ACWW_WIDE", 1, 0, 0},  // read every frame by gpu3d_wide_wanted: only after a restart
     {"Game", "Main screen on top", "ACWW_MAIN_TOP", 0, 1, 0},  // read every frame by gpu2d's top_engine
     {"Enhancements", "Stacked fruit", "ACWW_STACK_FRUIT", 0, 1, 0},  // read by the game (n3ds_stack_fruit)
+    {"Enhancements", "New Leaf controls", "ACWW_NL_CONTROLS", 0, 1, 0},  // read by the game (n3ds_new_leaf_controls)
 };
 #define NOPT ((int)(sizeof sOpts / sizeof *sOpts))
 
@@ -47,6 +48,14 @@ int n3ds_stack_fruit(void) { return opt_get(3); }  // (sOpts[3]: "Stacked fruit"
 // (gpu2d.c, src/main/unk_0206db88.cpp) the town and the rooms kept on the top screen, the pause menu opening without
 // the screens changing places
 int n3ds_main_top(void) { return opt_get(2); }  // (sOpts[2]: "Main screen on top")
+
+// (include/n3ds_options.h) "New Leaf controls": the row found by its name, so rows added before it don't move it
+int n3ds_new_leaf_controls(void) {
+    static int row = -1;
+    if (row < 0)
+        for (row = 0; row < NOPT - 1 && strcmp(sOpts[row].name, "ACWW_NL_CONTROLS"); row++) {}
+    return opt_get(row);
+}
 
 void opt_set(int i, int v) {
     init();
@@ -223,6 +232,15 @@ static void draw_hand(uint32_t *px, int x, int y) {
             }
 }
 
+// the rows' step: 18 pixels, 16 when the rows and their groups' headings wouldn't fit above "* after a restart" (164)
+static int row_step(void) {
+    int n = 0;
+    const char *group = "";
+    for (int i = 0; i < NOPT; i++, n++)
+        if (strcmp(group, sOpts[i].group)) group = sOpts[i].group, n++;
+    return 46 + n * 18 <= 164 ? 18 : 16;
+}
+
 static void draw_picture(uint32_t *px) {
     memset(px, 0, PW * PH * 4);
     draw_button(px, sMenu.curTab == N3DS_OPT_TAB);
@@ -234,21 +252,21 @@ static void draw_picture(uint32_t *px) {
     rfill(px, 36, 24, 190, 40, 8, RGBA(255, 255, 255));
     rfill(px, 10, 43, 246, 183, 6, pale);
     text(px, PH, 113 - text(0, 0, 0, 0, "Options", 0) / 2, 24, "Options", ink);
-    int y = 46, handY = -1;
+    int y = 46, handY = -1, step = row_step();
     const char *group = "";
     int restart = 0;
     for (int i = 0; i < NOPT; i++) {
         if (strcmp(group, sOpts[i].group)) {
             group = sOpts[i].group;
             text(px, PH, 16, y, group, head);
-            y += 18;
+            y += step;
         }
         if (i == sCursor) handY = y;
         int x = text(px, PH, 22, y, sOpts[i].label, ink);
         if (!sOpts[i].live) text(px, PH, x, y, " *", head), restart = 1;
         const char *v = sVal[i] ? "On" : "Off";
         text(px, PH, 226 - text(0, 0, 0, 0, v, 0), y, v, ink);  // (room right of it for the hand)
-        y += 18;
+        y += step;
     }
     if (restart) text(px, PH, 16, 164, "* after a restart", head);
     // the cursor: the hand on the row's value, as the friends' tab points at a name (only while the page is the tab: the
@@ -275,12 +293,12 @@ enum { K_A = 1, K_B = 2, K_SELECT = 4, K_RIGHT = 16, K_LEFT = 32, K_UP = 64, K_D
 enum { BTN_X = 26, BTN_W = 24 };
 
 static int row_y(int i) {  // the top of option i's row in the page's picture (as draw_picture lays it out)
-    int y = 46;
+    int y = 46, step = row_step();
     const char *group = "";
     for (int k = 0;; k++) {
-        if (strcmp(group, sOpts[k].group)) group = sOpts[k].group, y += 18;
+        if (strcmp(group, sOpts[k].group)) group = sOpts[k].group, y += step;
         if (k == i) return y;
-        y += 18;
+        y += step;
     }
 }
 static void page_toggle(int i) {
@@ -327,7 +345,7 @@ void opt_touch(int *down, int *x, int *y) {
                 page_leave(t > 7 ? 7 : t);
             } else if (!tabRow) {
                 for (int i = 0; i < NOPT; i++)
-                    if (tx >= 10 && tx < 246 && ty >= row_y(i) - 1 && ty < row_y(i) + 17) sCursor = i, page_toggle(i);
+                    if (tx >= 10 && tx < 246 && ty >= row_y(i) - 1 && ty < row_y(i) + row_step() - 1) sCursor = i, page_toggle(i);
             }
         }
         // (the tab row left of the pockets' tab but for the button: nothing, but the game would switch to its touch mode)
