@@ -1,0 +1,51 @@
+From 7f328bed621dc6d6a38ea81df50d4c2a086eea00 Mon Sep 17 00:00:00 2001
+From: acww-3ds <noreply@invalid>
+Date: Sat, 14 Nov 2026 20:14:53 +0000
+Subject: [PATCH] Keyboard: room for every line start in
+ Keyboard_InsertCharMultiline
+
+Text_SplitLines writes maxLines + 1 line starts. The original gave them the
+stack after o28 (pad); a host compiler drops the unused pad, so on the 3DS
+the extra starts overwrote the saved r4-r6 and the letter menu's
+refreshKeys went on with a line start as its this: a data abort at
+Keyboard_EnableKey (FAR 0xCD) after typing into a letter's body. Host
+builds now pass an array of 7; the DS build is unchanged.
+---
+ src/ov095/unk_02292360.cpp | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/src/ov095/unk_02292360.cpp b/src/ov095/unk_02292360.cpp
+index 7a139b7..339974e 100644
+--- a/src/ov095/unk_02292360.cpp
++++ b/src/ov095/unk_02292360.cpp
+@@ -1219,8 +1219,15 @@ BOOL Keyboard_InsertCharMultiline(Keyboard *s, void *p1, s32 p2, u8 *p3, s32 a4,
+ {
+     u8 loc;
+     s32 o24;
++#ifdef HOST
++    // Text_SplitLines writes a6 + 1 line starts (up to 7: the bulletin board's 6 lines). On the DS they ran on into
++    // pad; a host compiler leaves the unused pad out, and they overwrote the saved registers, so the caller went on
++    // with a line start as its this (a data abort after typing in a letter).
++    s32 o28[7];
++#else
+     s32 o28;
+     struct Pad { s32 v[6]; Pad() {} ~Pad() {} } pad;
++#endif
+     u8 saved = s->typedRunLength;
+     Heap *heap = gCurrentHeap;
+     void *buf = Heap_AllocTail(heap, 0xc0);
+@@ -1233,7 +1240,11 @@ BOOL Keyboard_InsertCharMultiline(Keyboard *s, void *p1, s32 p2, u8 *p3, s32 a4,
+         Heap_Free(heap, buf);
+         return FALSE;
+     }
++#ifdef HOST
++    if (Text_SplitLines((u8 *)buf, o28, &o24, a4, a5, a7, a6) == 0) {
++#else
+     if (Text_SplitLines((u8 *)buf, &o28, &o24, a4, a5, a7, a6) == 0) {
++#endif
+         if (s->typedRunLength != saved) {
+             s->typedRunLength = saved;
+         }
+-- 
+2.43.0
+
