@@ -44,8 +44,9 @@ int opt_get(int i) { init(); return sVal[i]; }
 
 // (include/n3ds_options.h) the game's view of the enhancements' rows
 int n3ds_stack_fruit(void) { return opt_get(3); }  // (sOpts[3]: "Stacked fruit")
-// (gpu2d.c) the town and the rooms kept on the top screen, the pause menu opening without the screens changing places
-int opt_main_top(void) { return opt_get(2); }  // (sOpts[2]: "Main screen on top")
+// (gpu2d.c, src/main/unk_0206db88.cpp) the town and the rooms kept on the top screen, the pause menu opening without
+// the screens changing places
+int n3ds_main_top(void) { return opt_get(2); }  // (sOpts[2]: "Main screen on top")
 
 void opt_set(int i, int v) {
     init();

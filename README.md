@@ -118,7 +118,7 @@ lines that can also be edited by hand:
 | :--- | :--- | :--- |
 | `ACWW_PICA_INTERP` | `1` | 60 frames a second: the pictures between the game's |
 | `ACWW_WIDE` | `1` | the wide screens (after a restart) |
-| `ACWW_MAIN_TOP` | `0` | the town and the rooms always on the upper screen: opening the pause menu doesn't swap the screens (the touch screen then shows the sky and takes no touches there) |
+| `ACWW_MAIN_TOP` | `0` | the town and the rooms always on the upper screen: the pause menu opens and closes on the lower screen alone, over the sky (the touch screen then shows the sky and takes no touches there) |
 | `ACWW_STACK_FRUIT` | `0` | stacked fruit |
 | `ACWW_ANALOG` | `1` | the Circle Pad's angle and tilt (`0`: the D-pad's eight directions) |
 | `ACWW_FRAMESKIP` | `0` | `auto`: pictures are left out when the console can't keep the game's pace |

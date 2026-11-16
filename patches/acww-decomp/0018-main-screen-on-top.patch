@@ -1,17 +1,31 @@
 From: acww-3ds <noreply@invalid>
-Subject: [PATCH] Renderer 2D: the main screen kept on top (option ACWW_MAIN_TOP)
+Subject: [PATCH] Renderer 2D, game: the main screen kept on top (option ACWW_MAIN_TOP)
 
 The 3DS port's option "Main screen on top" (options_3ds.c): while engine A shows the 3D, it stays on the top screen
-whatever POWCNT1 bit 15 says, so the town and the rooms don't change screens when the pause menu opens.
+whatever POWCNT1 bit 15 says, so the town and the rooms don't change screens when the pause menu opens. The pause
+menu's opening and closing (src/main/unk_0206db88.cpp) then run on the bottom screen alone: the menu's background is
+wiped in over the sky on the sub engine's window 1 instead of engine A's over the world (the host's wipe,
+gpu2d_menu_wipe, takes the engine), and the camera doesn't lift the world off the screen (src/main/unk_0203a0cc.cpp),
+so the top screen goes on as it is. The sky leaves the sub engine without being loaded onto engine A, where it isn't
+shown (Sky_ParkOffSub, src/main/unk_020b8d9c.cpp: those loads were a hitch on the top screen); parked, its sprites
+(the moon) aren't drawn, its palette isn't loaded onto engine A and engine A's backdrop keeps its colour, so the sky
+on the top screen doesn't change. The background stays above the sky's layers (its stars at night) until they are
+gone. The wide view's culling planes (src/main/unk_02039c08.cpp) lie 96 pixels beyond the picture's edges, so that
+actors (the town gate) don't pop in at the top screen's edges.
 ---
- modern/host/gpu2d/gpu2d.c | 28 +++++++++++++++++++++++-----
- 1 file changed, 23 insertions(+), 5 deletions(-)
+ modern/host/gpu2d/gpu2d.c |  36 +++++++---
+ modern/host/gpu2d/gpu2d.h |   9 +--
+ src/main/unk_02039c08.cpp |  10 +--
+ src/main/unk_0203a0cc.cpp |  12 +++-
+ src/main/unk_0206db88.cpp | 148 +++++++++++++++++++++++++++++++++-----
+ src/main/unk_020b8d9c.cpp |  37 ++++++++++
+ 6 files changed, 218 insertions(+), 34 deletions(-)
 
 diff --git a/modern/host/gpu2d/gpu2d.c b/modern/host/gpu2d/gpu2d.c
-index fc75b53..16c6a96 100644
+index fc75b53..f571294 100644
 --- a/modern/host/gpu2d/gpu2d.c
 +++ b/modern/host/gpu2d/gpu2d.c
-@@ -25,6 +25,24 @@ static int sDiagnostics;  // keep what gpu2d_describe_pixel reports
+@@ -25,6 +25,25 @@ static int sDiagnostics;  // keep what gpu2d_describe_pixel reports
  
  void gpu2d_set_diagnostics(int on) { sDiagnostics = on; }
  
@@ -19,15 +33,16 @@ index fc75b53..16c6a96 100644
 +// on top" (options_3ds.c, ACWW_MAIN_TOP) keeps engine A there while it shows the 3D (DISPCNT bit 3: the town, the
 +// rooms), so the world stays on the top screen and doesn't change screens when the pause menu opens; screens with
 +// only 2D on engine A (the title, the letters' keyboard) keep the game's choice, their touch UI on the touch screen.
++// (The pause menu's opening and closing are changed for it in the game: src/main/unk_0206db88.cpp.)
 +#ifdef N3DS_PORT
-+int opt_main_top(void);  // options_3ds.c
++int n3ds_main_top(void);  // options_3ds.c
 +static int sMainTopForced;
 +int gpu2d_main_top_forced(void) { return sMainTopForced; }
 +#endif
 +static int top_engine(void) {
 +    int top = (sPowCnt & 0x8000) ? 0 : 1;
 +#ifdef N3DS_PORT
-+    sMainTopForced = top == 1 && opt_main_top() && (reg32(&sEngine[0], REG_DISPCNT) & 8);
++    sMainTopForced = top == 1 && n3ds_main_top() && (reg32(&sEngine[0], REG_DISPCNT) & 8);
 +    if (sMainTopForced) top = 0;
 +#endif
 +    return top;
@@ -36,7 +51,27 @@ index fc75b53..16c6a96 100644
  // ---- features seen: the frame each was first seen in, + 1 (0: not yet)
  static u32 sFeatureFrame[2][F_COUNT];
  static const char *const kFeatureNames[F_COUNT] = {
-@@ -827,7 +845,7 @@ static void record_end(const Gpu2dFrameInput *in) {
+@@ -727,7 +746,7 @@ typedef struct {
+     int haveObj0[2], topEngine;
+ #ifdef N3DS_PORT
+     Gpu2dMarginAffine margin[2];
+-    int iris, menuWipe;
++    int iris, menuWipe, menuWipeEngine;
+     const uint32_t *optPic;
+     uint32_t optSerial;
+     int optPageY, optBtnY;
+@@ -751,8 +770,8 @@ static void record_start(const Gpu2dFrameInput *in) {
+     memcpy(r->margin, sMargin, sizeof r->margin);
+     sMargin[0].bg = sMargin[1].bg = 0;
+     r->iris = sIris;
+-    if (!(gpu2d_read32(0x04000000) & 0x4000)) sMenuWipe = -1;
+-    r->menuWipe = sMenuWipe;
++    if (!(gpu2d_read32(sMenuWipeEngine ? 0x04001000 : 0x04000000) & 0x4000)) sMenuWipe = -1;
++    r->menuWipe = sMenuWipe, r->menuWipeEngine = sMenuWipeEngine;
+     r->optPic = sOptPic, r->optSerial = sOptSerial, r->optPageY = sOptPageY, r->optBtnY = sOptBtnY;
+     // (an anchor only for an entry still as the game gave it: OAM loaded another way gets none)
+     for (int n = 0; n < 2; n++)
+@@ -827,7 +846,7 @@ static void record_end(const Gpu2dFrameInput *in) {
          r->bgMask[n] = e->bgMask, r->objMask[n] = e->objMask;
      }
      memcpy(r->final, sShadow, sizeof r->final);
@@ -45,7 +80,15 @@ index fc75b53..16c6a96 100644
  }
  
  void gpu2d_draw_layers(int record) {
-@@ -957,7 +975,7 @@ void gpu2d_render_frame(const Gpu2dFrameInput *in) {
+@@ -853,6 +872,7 @@ void gpu2d_draw_layers(int record) {
+     memcpy(sLayers->margin, r->margin, sizeof sLayers->margin);
+     sLayers->iris = r->iris;
+     sLayers->menuWipe = r->menuWipe;
++    sLayers->menuWipeEngine = r->menuWipeEngine;
+     sLayers->optPic = r->optPic, sLayers->optSerial = r->optSerial, sLayers->optPageY = r->optPageY, sLayers->optBtnY = r->optBtnY;
+     memcpy(sLayers->bgAnchor, r->bgAnchor, sizeof sLayers->bgAnchor);
+     for (int n = 0; n < 2; n++) draw[n].objAnchor = r->objAnchor[n];
+@@ -957,7 +977,7 @@ void gpu2d_render_frame(const Gpu2dFrameInput *in) {
          return;
      }
      if (sLayers) {
@@ -54,7 +97,7 @@ index fc75b53..16c6a96 100644
          for (int n = 0; n < 2; n++) {
              sLayers->bgGran[n] = sEngine[n].bgGran;
              sLayers->bgMask[n] = sEngine[n].bgMask;
-@@ -966,9 +984,9 @@ void gpu2d_render_frame(const Gpu2dFrameInput *in) {
+@@ -966,9 +986,9 @@ void gpu2d_render_frame(const Gpu2dFrameInput *in) {
          sFrame++;
          return;
      }
@@ -66,7 +109,7 @@ index fc75b53..16c6a96 100644
          if (sGpu == 1) {  // (the pictures are the GPU's: the lines' master brightness and 3D scroll only)
              memcpy(sDeferredLines[screen], sEngine[n].lineInfo, sizeof sEngine[n].lineInfo);
              continue;
-@@ -996,7 +1014,7 @@ const uint32_t *gpu2d_deferred(int screen) { return sDeferred[screen & 1]; }
+@@ -996,7 +1016,7 @@ const uint32_t *gpu2d_deferred(int screen) { return sDeferred[screen & 1]; }
  const uint32_t *gpu2d_deferred_lines(int screen) { return sDeferredLines[screen & 1]; }
  
  void gpu2d_describe_pixel(int screen, int x, int y, char *buf, size_t size) {
@@ -75,6 +118,506 @@ index fc75b53..16c6a96 100644
      const Engine *e = &sEngine[n];
      static const char *const kLayer[8] = {"BG0", "BG1", "BG2", "BG3", "OBJ", "backdrop", "3D", "none"};
      static const char *const kEffect[7] = {"none", "alpha", "brightness up", "brightness down",
+diff --git a/modern/host/gpu2d/gpu2d.h b/modern/host/gpu2d/gpu2d.h
+index 15c338a..f2d3821 100644
+--- a/modern/host/gpu2d/gpu2d.h
++++ b/modern/host/gpu2d/gpu2d.h
+@@ -104,6 +104,7 @@ typedef struct Gpu2dLayers {
+     Gpu2dMarginAffine margin[2];  // per engine, for this frame
+     int iris;                     // the screen transitions' iris (gpu2d_iris) for this frame
+     int menuWipe;                 // the menus' wipe (gpu2d_menu_wipe) for this frame
++    int menuWipeEngine;           // the engine it is on (0 main, 1 sub)
+     const uint32_t *optPic;       // the options page's picture (gpu2d_options) and its serial, for this frame
+     uint32_t optSerial;
+     int optPageY, optBtnY;
+@@ -156,10 +157,10 @@ void gpu2d_margin_affine(int engine, int bg, int line, int pa, int32_t x, int32_
+ // the screen transitions' iris, drawn by the host over both whole screens: 0 open to 0x1000 closed, -1 none; given by
+ // the game at its V-blank, from the next frame on
+ void gpu2d_iris(int progress);
+-// the menus' wipe (MenuScreen_WipeInVBlank / WipeOutVBlank): engine A's window 1, its left edge on line y at
+-// pos - (a zigzag of 24 lines up and 24 down), drawn by the host over the whole wide screen; given by the game at its
+-// V-blank, from the next frame on, kept while that window is on (-1 none)
+-void gpu2d_menu_wipe(int pos);
++// the menus' wipe (MenuScreen_WipeInVBlank / WipeOutVBlank): an engine's (0 main, 1 sub) window 1, its left edge on
++// line y at pos - (a zigzag of 24 lines up and 24 down), drawn by the host over the whole wide screen; given by the
++// game at its V-blank, from the next frame on, kept while that window is on (-1 none)
++void gpu2d_menu_wipe(int engine, int pos);
+ // the options page (modern/host/options_3ds.c): a 256x192 RGBA picture (0xRRGGBBAA; the page in lines 17-191, the pause
+ // menu's button at (0, 0), 24x16), drawn over the bottom screen; serial changes whenever its pixels did (the host
+ // uploads it then), pageY the page's offset downwards (0 in place, 192 or more not shown: it slides); from the next
+diff --git a/src/main/unk_02039c08.cpp b/src/main/unk_02039c08.cpp
+index 5e9c106..7a3d7d6 100644
+--- a/src/main/unk_02039c08.cpp
++++ b/src/main/unk_02039c08.cpp
+@@ -34,13 +34,15 @@ void ViewFrustum::calcPlanes() {
+     s32 y = func_01ffcb0c(nearClip, s);
+     s32 x = func_01ffcb0c(aspect, y);
+ #ifdef N3DS_PORT
+-    // The wide view: the side planes through the wide 3D picture's edges, 400 x 240 around the DS's 256 x 192
+-    // (gpu3d.h GPU3D_WIDE_X / Y), so that what is drawn there is there (and its actors run: Actor::preExecute)
++    // The wide view: the side planes 96 pixels beyond the wide 3D picture's edges, 400 x 240 around the DS's 256 x 192
++    // (gpu3d.h GPU3D_WIDE_X / Y), so that what is drawn there is there (and its actors run: Actor::preExecute) and
++    // comes in already running (at the picture's edges, the top screen's with "Main screen on top", it popped in; the
++    // buildings, the town gate, need that much)
+     static int wide = -1;
+     if (wide < 0) wide = gpu3d_wide_wanted();
+     if (wide) {
+-        x = x * (128 + 72) / 128;
+-        y = y * (96 + 24) / 96;
++        x = x * (128 + 72 + 96) / 128;
++        y = y * (96 + 24 + 96) / 96;
+     }
+ #endif
+     v[0] = -x;
+diff --git a/src/main/unk_0203a0cc.cpp b/src/main/unk_0203a0cc.cpp
+index f284b3a..54993c5 100644
+--- a/src/main/unk_0203a0cc.cpp
++++ b/src/main/unk_0203a0cc.cpp
+@@ -20,6 +20,7 @@
+ #include "gfx/DebugColor.h"
+ #include "gfx/ViewFrustum.h"
+ #include "player/PlayerData.h"
++#include "n3ds_options.h"
+ #include "proto/itcm/unk_01ffcb2c.h"
+ #include "proto/itcm/unk_01ffcfc0.h"
+ #include "proto/main/unk_02002b1c.h"
+@@ -883,8 +884,15 @@ void Camera::updateMode1() {
+             e.y = o.y;
+             e.z = o.z;
+         }
+-        v.y = v.y + (0x1000 - MenuCtrl_GetTransitionProgress()) * 15;
+-        e.y = e.y + (0x1000 - MenuCtrl_GetTransitionProgress()) * 2;
++#ifdef N3DS_PORT
++        // (the port's "Main screen on top": the world stays where it is while the pause menu opens or closes, also in
++        // the frames before and after the transition's progress is set)
++        if (!n3ds_menu_on_sub())
++#endif
++        {
++            v.y = v.y + (0x1000 - MenuCtrl_GetTransitionProgress()) * 15;
++            e.y = e.y + (0x1000 - MenuCtrl_GetTransitionProgress()) * 2;
++        }
+         if (prevMode == 9) {
+             v.y = v.y + Camera_UpdateSway(this);
+         }
+diff --git a/src/main/unk_0206db88.cpp b/src/main/unk_0206db88.cpp
+index c4ed7c1..b5fd74f 100644
+--- a/src/main/unk_0206db88.cpp
++++ b/src/main/unk_0206db88.cpp
+@@ -5,6 +5,7 @@
+ #include "gfx/BgVramTask.h"
+ #include "nitro/io_access.h"
+ #include "n3ds_ui.h"
++#include "n3ds_options.h"
+ #include "player/PlayerData.h"
+ #include "proto/autoload_2/unk_020e8558.h"
+ #include "proto/dtcm/unk_027e0434.h"
+@@ -35,6 +36,9 @@ BOOL Camera_IsViewPushed();
+ void Camera_PopView();
+ void Sky_Disable();
+ BOOL Camera_SetMode1();
++#ifdef N3DS_PORT
++void Sky_ParkOffSub();
++#endif
+ 
+ }
+ 
+@@ -52,6 +56,34 @@ Slot16 sMenuScreenScroll;
+ Slot8 sMenuScreenWipeFlags;
+ Slot8 sMenuScreenBgKind;
+ HBlankTask sMenuWipeHBlankTask;
++#ifdef N3DS_PORT
++// The port's "Main screen on top" (n3ds_main_top): the world stays on the top screen, so the menu opens and closes on
++// the bottom one alone - its background (layer 5, sub BG2) wiped in over the sky on the sub engine's window 1 instead
++// of engine A's over the world, and the camera not moving the world off the screen (the transition's progress kept
++// full). Taken when the menu starts opening, kept to its closing.
++static BOOL sMenuOnSub;
++extern "C" int n3ds_menu_on_sub(void) { return sMenuOnSub; }
++#define MENU_WIN1H ((volatile u16 *)(sMenuOnSub ? 0x4001042 : 0x4000042))
++#define MENU_WIN1_RECT(a, b, c, d) (sMenuOnSub ? Gfx2d_SetSubWin1Rect(a, b, c, d) : Gfx2d_SetMainWin1Rect(a, b, c, d))
++#define MENU_PROGRESS(v) (sMenuOnSub ? 0x1000 : (v))
++// the sub engine's window 1 for the wipe: everything inside it, the background (BG2) above the sky by its priority
++// (1: over the sky's BG1 and BG3 and its sprites, 2 and 3); outside it all but the background
++static void MenuScreen_SubWipeWindow() {
++    Gfx2d_EnableSubWindows(2);
++    Gfx2d_SetSubWin1Planes(0x3f, TRUE);
++    Gfx2d_SetSubWinOutPlanes(0x3b);
++}
++// the background's priority lowered under the menu's layers (MenuScreen_SetupSubBg) once the sub engine shows neither
++// BG1 nor BG3 (the sky's, then the menu's BG1 with the stars' map still in it): the planes change some frames after
++// Gfx2d_HideSubPlanes, the priority at once
++static void MenuScreen_SubBgUnderMenu(BOOL now) {
++    if (now || !(IO_R((vu32 *)0x4001000) & 0xa00)) MenuScreen_SetupSubBg();
++}
++#else
++#define MENU_WIN1H ((volatile u16 *)0x4000042)
++#define MENU_WIN1_RECT Gfx2d_SetMainWin1Rect
++#define MENU_PROGRESS(v) (v)
++#endif
+ #ifdef N3DS_PORT  // (the host draws the wipe's zigzag, gpu2d_menu_wipe: no window changed every line, the V-blank's part kept)
+ #define MENU_WIPE_HBLANK NULL
+ #else
+@@ -73,8 +105,8 @@ extern "C" void MenuScreen_WipeInVBlank(void) {
+     } else {
+         HBlank_Remove(&sMenuWipeHBlankTask);
+         sMenuScreenWipeFlags.v &= ~1;
+-        Gfx2d_SetMainWin1Rect(0, 0, 255, 192);
+-        IO_W((volatile u16 *)0x4000042, 0xff);
++        MENU_WIN1_RECT(0, 0, 255, 192);
++        IO_W(MENU_WIN1H, 0xff);
+         sMenuWipePos.v = 0;
+     }
+     i = 0;
+@@ -89,9 +121,9 @@ extern "C" void MenuScreen_WipeInVBlank(void) {
+             sMenuWipeEdge[i] = t;
+         }
+     }
+-    IO_W((volatile u16 *)0x4000042, ((sMenuWipeEdge[0] << 8) & 0xff00) | 0xff);
++    IO_W(MENU_WIN1H, ((sMenuWipeEdge[0] << 8) & 0xff00) | 0xff);
+ #ifdef N3DS_PORT
+-    gpu2d_menu_wipe(sMenuWipePos.v);
++    gpu2d_menu_wipe(sMenuOnSub, sMenuWipePos.v);
+ #endif
+ }
+ 
+@@ -103,7 +135,7 @@ extern "C" void MenuScreen_WipeOutVBlank(void) {
+         HBlank_Remove(&sMenuWipeHBlankTask);
+         sMenuScreenWipeFlags.v &= ~1;
+         sMenuWipePos.v = 0xfe;
+-        IO_W((volatile u16 *)0x4000042, 0xfeff);
++        IO_W(MENU_WIN1H, 0xfeff);
+     }
+     i = 0;
+     b = sMenuWipePos.v;
+@@ -118,7 +150,7 @@ extern "C" void MenuScreen_WipeOutVBlank(void) {
+         }
+     }
+ #ifdef N3DS_PORT
+-    gpu2d_menu_wipe(sMenuWipePos.v);
++    gpu2d_menu_wipe(sMenuOnSub, sMenuWipePos.v);
+ #endif
+ }
+ 
+@@ -138,7 +170,7 @@ extern "C" void MenuScreen_StartWipeIn(void) {
+     for (i = 0; i < 24; i++) {
+         sMenuWipeEdge[i] = 0xfe;
+     }
+-    Gfx2d_SetMainWin1Rect(sMenuWipePos.v, 0, 255, 192);
++    MENU_WIN1_RECT(sMenuWipePos.v, 0, 255, 192);
+     sMenuWipeLine = 0;
+ }
+ 
+@@ -151,7 +183,7 @@ extern "C" void MenuScreen_StartWipeOut(void) {
+     for (i = 0; i < 24; i++) {
+         sMenuWipeEdge[i] = 0;
+     }
+-    Gfx2d_SetMainWin1Rect(1, 0, 255, 192);
++    MENU_WIN1_RECT(1, 0, 255, 192);
+     sMenuWipeLine = 0;
+ }
+ 
+@@ -262,6 +294,13 @@ extern "C" void MenuScreen_BeginClose() {
+ }
+ 
+ extern "C" void MenuScreen_BeginOpen() {
++#ifdef N3DS_PORT
++    sMenuOnSub = n3ds_main_top();
++    if (sMenuOnSub) {  // (as MenuScreen_SetupMainBg, on the sub engine: above the sky)
++        Gfx2d_SetLayerPriority(5, 1);
++        Gfx2d_SetLayerControl(5, 0, 0, 0);
++    } else
++#endif
+     MenuScreen_SetupMainBg();
+     sMenuScreenState.v = 1;
+     sMenuScreenBgKind.v = 4;
+@@ -282,6 +321,10 @@ extern "C" void MenuScreen_Reset() {
+         Gfx2d_ResetLayer(5);
+     }
+     Gfx2d_DisableMainWindows(2);
++#ifdef N3DS_PORT
++    if (sMenuOnSub) Gfx2d_DisableSubWindows(2);
++    sMenuOnSub = FALSE;
++#endif
+     gGfxMainOnTop = 0;
+     MenuCtrl_ClearScreenChanging();
+     MenuScreen_ClearState();
+@@ -308,6 +351,16 @@ extern "C" BOOL MenuScreen_StepAct00() { return FALSE; }
+ extern "C" BOOL MenuScreen_StepNop() { return TRUE; }
+ 
+ extern "C" BOOL MenuScreen_StepAct01() {
++#ifdef N3DS_PORT
++    if (sMenuOnSub) {
++        if (!MenuScreen_LoadBackground(5)) return TRUE;
++        sMenuScreenState.v = 2;
++        Gfx2d_ShowLayer(5);
++        MenuScreen_SubWipeWindow();
++        MenuScreen_StartWipeIn();
++        return MenuScreen_StepAct02();
++    }
++#endif
+     if (MenuScreen_LoadBackground(1)) {
+         sMenuScreenState.v = 2;
+         Gfx2d_ShowLayer(1);
+@@ -322,8 +375,18 @@ extern "C" BOOL MenuScreen_StepAct01() {
+ 
+ extern "C" BOOL MenuScreen_StepAct02() {
+     if (!MenuScreen_IsWiping()) {
+-        Gfx2d_SetMainWin1Rect(1, 0, 0xff, 0xc0);
++        MENU_WIN1_RECT(1, 0, 0xff, 0xc0);
+         sMenuScreenState.v = 3;
++#ifdef N3DS_PORT
++        // (the sky hidden under the background now; its priority lowered with MenuScreen_StepAct04, when the sky is
++        // gone: the planes change at the V-blank, the priority at once)
++        // The sky off the sub engine here already, where StepAct04 would move it to engine A (its stars and sun
++        // are OBJs, they'd show through the background)
++        if (sMenuOnSub) {
++            Gfx2d_HideSubPlanes(0xb);
++            if (Unk_0206dc9c_IsZero(gFieldSceneKind)) Sky_ParkOffSub();  // (closing loads it back onto B)
++        } else
++#endif
+         MenuScreen_SetupSubBg();
+     }
+     return TRUE;
+@@ -332,7 +395,7 @@ extern "C" BOOL MenuScreen_StepAct02() {
+ extern "C" BOOL MenuScreen_StepAct03() {
+     if (Camera_SetMode1()) {
+         MenuCtrl_SetTransitionActive();
+-        MenuCtrl_SetTransitionProgress(0);
++        MenuCtrl_SetTransitionProgress(MENU_PROGRESS(0));
+         sMenuScreenProgress = 0x1000;
+         sMenuScreenProgressStep = 0x200;
+         sMenuScreenState.v = 4;
+@@ -341,8 +404,15 @@ extern "C" BOOL MenuScreen_StepAct03() {
+ }
+ 
+ extern "C" BOOL MenuScreen_StepAct04() {
++#ifdef N3DS_PORT
++    if (sMenuOnSub || MenuScreen_LoadBackground(5)) {  // (on the sub engine since StepAct01: not loaded again)
++#else
+     if (MenuScreen_LoadBackground(5)) {
++#endif
+         Gfx2d_DisableMainWindows(2);
++#ifdef N3DS_PORT
++        if (sMenuOnSub) Gfx2d_DisableSubWindows(2);  // (the background's priority: StepAct05, StepAct06)
++#endif
+         Gfx2d_HideSubPlanes(0xf);
+         Gfx2d_ShowLayer(5);
+         gGfxMainOnTop = 1;
+@@ -350,6 +420,9 @@ extern "C" BOOL MenuScreen_StepAct04() {
+         MenuCtrl_SetMenuOnTop();
+         Gfx2d_ResetLayer(1);
+         sMenuScreenState.v = 5;
++#ifdef N3DS_PORT
++        if (!sMenuOnSub)  // (StepAct02 did it)
++#endif
+         if (Unk_0206dc9c_IsZero(gFieldSceneKind)) {
+             Sky_SetEngine(1);
+         }
+@@ -358,6 +431,9 @@ extern "C" BOOL MenuScreen_StepAct04() {
+ }
+ 
+ extern "C" BOOL MenuScreen_StepAct05() {
++#ifdef N3DS_PORT
++    if (sMenuOnSub) MenuScreen_SubBgUnderMenu(FALSE);
++#endif
+     if (sMenuScreenProgress == 0) {
+         sMenuScreenState.v = 6;
+         if (Unk_0206dc9c_IsZero(gFieldSceneKind)) {
+@@ -371,11 +447,14 @@ extern "C" BOOL MenuScreen_StepAct05() {
+     } else {
+         sMenuScreenProgress = 0;
+     }
+-    MenuCtrl_SetTransitionProgress(0x1000 - func_01ffcb0c(sMenuScreenProgress, sMenuScreenProgress));
++    MenuCtrl_SetTransitionProgress(MENU_PROGRESS(0x1000 - func_01ffcb0c(sMenuScreenProgress, sMenuScreenProgress)));
+     return TRUE;
+ }
+ 
+ extern "C" BOOL MenuScreen_StepAct06() {
++#ifdef N3DS_PORT
++    if (sMenuOnSub) MenuScreen_SubBgUnderMenu(TRUE);
++#endif
+     Gfx2d_DisableMainWindows(1);
+     Gfx2d_DisableMainWindows(2);
+     Gfx2d_HideMainPlanes(0xe);
+@@ -389,6 +468,9 @@ extern "C" BOOL MenuScreen_StepAct08() {
+     }
+     if (Unk_0206dc9c_IsZero(gFieldSceneKind)) {
+         ScreenLayers_AcquireStub();
++#ifdef N3DS_PORT
++        if (!sMenuOnSub)
++#endif
+         Sky_SetEngine(1);
+         Gfx2d_HideMainPlanes(8);
+     }
+@@ -396,20 +478,39 @@ extern "C" BOOL MenuScreen_StepAct08() {
+     sMenuScreenProgress = 0x1000;
+     sMenuScreenProgressStep = 0x200;
+     MenuScreen_SetFlags(1);
++#ifdef N3DS_PORT
++    // (the wipe's window on from here, all of it inside (the host's wipe at 0, StepAct09: over the wide screen's
++    // margins too), so it covers the screen when the sky comes back behind the background)
++    if (sMenuOnSub) {
++        MenuScreen_SubWipeWindow();
++        Gfx2d_SetSubWin1Rect(1, 0, 255, 192);
++    }
++#endif
+     return TRUE;
+ }
+ 
+ extern "C" BOOL MenuScreen_StepAct09() {
++#ifdef N3DS_PORT
++    if (sMenuOnSub) gpu2d_menu_wipe(1, 0);  // (each frame: the host keeps it only once the window is on)
++#endif
+     if (sMenuScreenProgress == 0) {
+         if (!MenuScreen_HasFlags(1)) {
+             Gfx2d_SetLayerPriority(5, 1);
++#ifdef N3DS_PORT
++            if (!sMenuOnSub)  // (the background stays on the sub engine, over the sky, to be wiped out there)
++#endif
+             MenuScreen_LoadBackground(1);
+             MenuCtrl_ClearTransitionActive();
+             sMenuScreenState.v = 10;
+             gGfxMainOnTop = 0;
+             Gfx2d_HideMainPlanes(0xe);
+-            Gfx2d_ShowLayer(1);
+-            Gfx2d_ResetLayer(5);
++#ifdef N3DS_PORT
++            if (!sMenuOnSub)
++#endif
++            {
++                Gfx2d_ShowLayer(1);
++                Gfx2d_ResetLayer(5);
++            }
+             HudObjGfx_LoadForSceneSub();
+             if (Unk_0206dc9c_IsZero(gFieldSceneKind)) {
+                 Sky_SetEngine(0);
+@@ -423,15 +524,24 @@ extern "C" BOOL MenuScreen_StepAct09() {
+     } else {
+         sMenuScreenProgress = 0;
+     }
+-    MenuCtrl_SetTransitionProgress(func_01ffcb0c(sMenuScreenProgress, sMenuScreenProgress));
++    MenuCtrl_SetTransitionProgress(MENU_PROGRESS(func_01ffcb0c(sMenuScreenProgress, sMenuScreenProgress)));
+     return TRUE;
+ }
+ 
+ extern "C" BOOL MenuScreen_StepAct0A() {
++#ifdef N3DS_PORT
++    if (sMenuOnSub) MenuScreen_SubWipeWindow();
++    else
++#endif
+     Gfx2d_EnableMainWindows(2);
+     Gfx2d_DisableMainWindows(1);
+-    Gfx2d_SetMainWin1Planes(0x1f);
+-    Gfx2d_SetMainWinOutPlanes(0x1b);
++#ifdef N3DS_PORT
++    if (!sMenuOnSub)
++#endif
++    {
++        Gfx2d_SetMainWin1Planes(0x1f);
++        Gfx2d_SetMainWinOutPlanes(0x1b);
++    }
+     Gfx2d_HideMainPlanes(10);
+     MenuScreen_StartWipeOut();
+     if (Camera_RestorePrevMode()) {
+@@ -443,6 +553,12 @@ extern "C" BOOL MenuScreen_StepAct0A() {
+ extern "C" BOOL MenuScreen_StepAct0B() {
+     if (!MenuScreen_IsWiping()) {
+         sMenuScreenState.v = 0xc;
++#ifdef N3DS_PORT
++        if (sMenuOnSub) {
++            Gfx2d_DisableSubWindows(2);
++            Gfx2d_ResetLayer(5);
++        }
++#endif
+         Gfx2d_DisableMainWindows(2);
+         Gfx2d_ResetLayer(1);
+         MenuCtrl_ClearScreenChanging();
+diff --git a/src/main/unk_020b8d9c.cpp b/src/main/unk_020b8d9c.cpp
+index 581813d..1394420 100644
+--- a/src/main/unk_020b8d9c.cpp
++++ b/src/main/unk_020b8d9c.cpp
+@@ -73,6 +73,7 @@
+ #include "proto/main/unk_020c00c0.h"
+ #include "proto/ov003/unk_ov003_02204ce8.h"
+ #include "proto/ov003/unk_ov003_022192b4.h"
++#include "n3ds_options.h"
+ 
+ // ======== class types (global scope) ========
+ class SkyProc;
+@@ -5415,7 +5416,13 @@ extern "C" void SkySprites_UpdateIndoor(SkySprites *obj) {
+     SkySprites_UpdateEventsIndoor(obj);
+ }
+ 
++#ifdef N3DS_PORT
++static BOOL sSkyParked;  // (Sky_ParkOffSub until Sky_VBlankSub runs with the sky back on engine B: Sky_SetEngine(0))
++#endif
+ extern "C" void SkySprites_Draw(SkySprites *obj) {
++#ifdef N3DS_PORT
++    if (sSkyParked) return;  // (on engine A they'd show on the top screen over the world: the moon, the sun)
++#endif
+     SkySprite *e;
+     SkySprite *end = obj->sprites + 0x3c;
+     s32 yoff = gWeatherManager.screenOffsetY[gWeatherManager.bufferIndex ^ 1];
+@@ -6319,6 +6326,9 @@ extern "C" void Sky_VBlankSub()
+ {
+     u8 t[2];
+     volatile u16 v1, v2;
++#ifdef N3DS_PORT
++    if (gWeatherManager.engine == 0) sSkyParked = FALSE;  // (not the last run before Sky_ParkOffSub's replace)
++#endif
+     s32 y = gWeatherManager.screenOffsetY[gWeatherManager.bufferIndex];
+     v1 = sSkyGradient.keyColors[0];
+     REG16(HW_PLTT + 0x400) = v1;
+@@ -6470,6 +6480,11 @@ void Sky_VBlankDisabled(void) {
+     vu16 t;
+     t = sSkyGradient.keyColors[0];
+     *(vu16 *)(HW_PLTT + 0x400) = t;
++#ifdef N3DS_PORT
++    // (parked, the world on the top screen: engine A's backdrop, the sky behind the 3D, as Sky_VBlankSub keeps it)
++    if (sSkyParked) *(vu16 *)HW_PLTT = sSkyGradient.keyColors[1];
++    else
++#endif
+     *(vu16 *)HW_PLTT = sSkyGradient.lineColors[0][0xbf];
+     IO_W((vu32 *)0x4000000, IO_R((vu32 *)0x4000000) & 0xfffff5ff);
+ }
+@@ -6481,9 +6496,18 @@ void Sky_FrameOutdoor(void) {
+         Sky_UpdateLineTables();
+         gWeatherManager.updateTransitionStreamed();
+     }
++#ifdef N3DS_PORT
++    // (parked: the colours and the world's lighting as ever, but no palette onto engine A, whose backdrop it would
++    // change on the top screen)
++    if (sSkyParked) Sky_BlendPalettes();
++    else
++#endif
+     Sky_ApplyPalettes(gWeatherManager.engine);
+     if (gCamera != 0) {
+         a = MenuCtrl_GetTransitionProgress() * 0x123 >> 12;
++#ifdef N3DS_PORT
++        if (n3ds_menu_on_sub()) a = 0;  // ("Main screen on top": the sky not moved with the world, as the camera)
++#endif
+         b = Camera_GetCloseUpFactor() * 30 >> 12;
+         gWeatherManager.screenOffsetY[gWeatherManager.bufferIndex ^ 1] = a + b;
+     }
+@@ -6762,6 +6786,19 @@ extern "C" void Sky_Disable(void) {
+     Gfx2d_HideMainPlanes(0xa);
+ }
+ 
++#ifdef N3DS_PORT
++// The port's "Main screen on top" (src/main/unk_0206db88.cpp): while the pause menu is open on the bottom screen the
++// sky is kept off the sub engine (its sprites and cloud changes would draw into the menu's VRAM) the way
++// Sky_SetEngine(1) does it, but without loading its BGs onto engine A, where it isn't shown: those loads cost about a
++// frame on the 3DS, a hitch while the world goes on on the top screen.
++extern "C" void Sky_ParkOffSub(void) {
++    sSkyParked = TRUE;  // (its sprites not drawn: SkySprites_Draw)
++    Sky_Disable();
++    gWeatherManager.engine = 1;
++    Sky_ResetObjGfx();
++}
++#endif
++
+ extern "C" s32 Weather_GetFallingPrecip(void) {
+     switch (gWeatherManager.level) {
+     case 2:
 -- 
 2.43.0
 
