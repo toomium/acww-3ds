@@ -22,6 +22,7 @@ static void apply_interp(int v) { g3p_set_interp(v); }
 static Option sOpts[] = {
     {"Game", "60 fps", "ACWW_PICA_INTERP", 1, 1, apply_interp},
     {"Game", "Wide screen", "ACWW_WIDE", 1, 0, 0},  // read every frame by gpu3d_wide_wanted: only after a restart
+    {"Game", "Main screen on top", "ACWW_MAIN_TOP", 0, 1, 0},  // read every frame by gpu2d's top_engine
     {"Enhancements", "Stacked fruit", "ACWW_STACK_FRUIT", 0, 1, 0},  // read by the game (n3ds_stack_fruit)
 };
 #define NOPT ((int)(sizeof sOpts / sizeof *sOpts))
@@ -42,7 +43,10 @@ const Option *opt_info(int i) { return &sOpts[i]; }
 int opt_get(int i) { init(); return sVal[i]; }
 
 // (include/n3ds_options.h) the game's view of the enhancements' rows
-int n3ds_stack_fruit(void) { return opt_get(2); }  // (sOpts[2]: "Stacked fruit")
+int n3ds_stack_fruit(void) { return opt_get(3); }  // (sOpts[3]: "Stacked fruit")
+// (gpu2d.c, src/main/unk_0206db88.cpp) the town and the rooms kept on the top screen, the pause menu opening without
+// the screens changing places
+int n3ds_main_top(void) { return opt_get(2); }  // (sOpts[2]: "Main screen on top")
 
 void opt_set(int i, int v) {
     init();
@@ -307,6 +311,7 @@ uint32_t opt_keys(uint32_t pressed) {
     return pressed & ~hide;
 }
 
+int gpu2d_main_top_forced(void);  // gpu2d.c: engine A on the top screen by the option, not by the game
 // The touch (down, x, y in the DS's pixels) as the game gets it. Once a frame (the first call of a frame does the work).
 void opt_touch(int *down, int *x, int *y) {
     static unsigned long long frame = ~0ull;
@@ -329,7 +334,9 @@ void opt_touch(int *down, int *x, int *y) {
         if (d && (sPhase != PAGE_NONE || (newly && sMenu.open && tabRow && tx < 0x35 && !(tx >= BTN_X && tx < BTN_X + BTN_W))))
             hide = 1;
     }
-    if (hide) *down = 0;
+    // the world moved to the top screen by "Main screen on top": the touch screen shows the other engine's picture (the
+    // sky), where the game would take a touch as one on the world, so the game gets none
+    if (hide || gpu2d_main_top_forced()) *down = 0;
 }
 
 // once a frame: the picture redrawn when what it shows changed, and what the host draws given to gpu2d

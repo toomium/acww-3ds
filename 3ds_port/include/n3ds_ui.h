@@ -22,9 +22,9 @@ void Oam_Anchor(int mode, int from, unsigned anchor);
 // BGs (bit n: BGn) and windows (bit w: window w) of an engine (0 main, 1 sub) anchored from the next frame on, until
 // changed (bgs 0: none)
 void gpu2d_bg_anchor(int engine, int bgs, int windows, int anchor);
-// the menus' wipe (src/main/unk_0206db88.cpp): its position for the next frame, the host drawing window 1's zigzag
-// over the whole wide screen instead of the game's H-blank (gpu2d.h)
-void gpu2d_menu_wipe(int pos);
+// the menus' wipe (src/main/unk_0206db88.cpp): its engine (0 main, 1 sub) and position for the next frame, the host
+// drawing window 1's zigzag over the whole wide screen instead of the game's H-blank (gpu2d.h)
+void gpu2d_menu_wipe(int engine, int pos);
 // the text box's BG shown (TalkFrame_ShowBg / HideBg, src/main/unk_02065e88.cpp): the choices go with it
 extern int gN3dsTalkBgShown;
 // the pause menu (MenuTabBar, src/ov090/unk_ov090_022918e0.cpp) for the options page (modern/host/options_3ds.c): one

@@ -10,8 +10,8 @@ void gpu2d_margin_affine(int engine, int bg, int line, int pa, int32_t x, int32_
 }
 static int sIris = -1;  // (kept until changed)
 void gpu2d_iris(int progress) { sIris = progress; }
-static int sMenuWipe = -1;  // (kept while engine A's window 1 is on)
-void gpu2d_menu_wipe(int pos) { sMenuWipe = pos; }
+static int sMenuWipe = -1, sMenuWipeEngine;  // (kept while that engine's window 1 is on)
+void gpu2d_menu_wipe(int engine, int pos) { sMenuWipeEngine = engine, sMenuWipe = pos; }
 static const uint32_t *sOptPic;  // (the options page: kept until changed)
 static uint32_t sOptSerial;
 static int sOptPageY = 192, sOptBtnY = GPU2D_NO_BTN;

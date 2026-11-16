@@ -12,6 +12,11 @@ extern "C" {
 // stacked fruit switched on: a fruit picked up or dragged onto one of its kind joins it (the stacks there keep working
 // when it is off)
 int n3ds_stack_fruit(void);
+// "Main screen on top": the town and the rooms kept on the top screen; the pause menu opens and closes on the bottom
+// screen alone (src/main/unk_0206db88.cpp)
+int n3ds_main_top(void);
+// the pause menu opening or closing that way (src/main/unk_0206db88.cpp): taken when it starts opening
+int n3ds_menu_on_sub(void);
 // the pocket a fruit (*item, as picked up) joins: a stack or single fruit of its kind with room, not flagged; -1 none,
 // or stacking off, or online (src/main/unk_02098e90.cpp)
 int Pocket_FindFruitStack(unsigned short *item);

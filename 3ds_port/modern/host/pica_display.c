@@ -1030,7 +1030,7 @@ static void group(const Group *g) {
             stencil(GPU_ALWAYS, (u32)(w + 1) << 3 | (shows[w + 1] & 0x20 ? 0 : 4), 0, 0x1c);
             begin();
 #ifdef N3DS_PORT
-            if (w == 1 && g->engine == 0 && sScreenMode && sLayers.menuWipe >= 0) {
+            if (w == 1 && g->engine == sLayers.menuWipeEngine && sScreenMode && sLayers.menuWipe >= 0) {
                 menu_wipe(g);
                 end();
                 continue;
