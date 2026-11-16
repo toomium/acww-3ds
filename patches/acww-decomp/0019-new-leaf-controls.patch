@@ -2,14 +2,15 @@ From: acww-3ds <noreply@invalid>
 Subject: [PATCH] Player and menus: "New Leaf controls" (option ACWW_NL_CONTROLS)
 
 The 3DS port's option "New Leaf controls" (options_3ds.c, n3ds_options.h): Y picks up items and pulls weeds (B on
-the DS), so B only runs; X opens the pockets (Y on the DS) and closes them again; the map has no key then. Off, the
-keys are the DS's.
+the DS), so B only runs; X opens the pockets (Y on the DS) and closes them again, also from the pocket menu's tab
+(PocketMenu::handleTabSwitch, where X switched to the map); the map has no key then. Off, the keys are the DS's.
 ---
  src/main/unk_02004558_extra.cpp  |  8 ++++++++
  src/main/unk_0206e54c.cpp        | 12 ++++++++++++
+ src/ov096/unk_02294c40.cpp       |  8 ++++++++
  src/ov099/unk_ov099_02294c40.cpp |  7 +++++++
  src/ov103/unk_ov103_02294c40.cpp |  7 +++++++
- 4 files changed, 34 insertions(+)
+ 5 files changed, 42 insertions(+)
 
 diff --git a/src/main/unk_02004558_extra.cpp b/src/main/unk_02004558_extra.cpp
 index f4550db..c518a99 100644
@@ -74,6 +75,28 @@ index 732fade..af24c8c 100644
              TalkRequest_AddMenu(0);
              sMenuMode = 5;
              MenuCtrl_SetButtons();
+diff --git a/src/ov096/unk_02294c40.cpp b/src/ov096/unk_02294c40.cpp
+index 1c5d602..0d424b2 100644
+--- a/src/ov096/unk_02294c40.cpp
++++ b/src/ov096/unk_02294c40.cpp
+@@ -345,9 +345,17 @@ BOOL PocketMenu::handleTabSwitch() {
+         t = MenuTabBar_HitTestTouch();
+     } else {
+         u16 v = gPad[1];
++#ifdef N3DS_PORT
++        // the key that opened the pockets closes them: Y on the DS, X with "New Leaf controls" (n3ds_options.h),
++        // where the map has no key (X on the DS)
++        if (v & n3ds_key_pockets()) {
++            t = 7;
++        } else if (!n3ds_new_leaf_controls() && (v & 0x400)) {
++#else
+         if (v & 0x800) {
+             t = 7;
+         } else if (v & 0x400) {
++#endif
+             t = 5;
+         } else if (v & 4) {
+             t = 4;
 diff --git a/src/ov099/unk_ov099_02294c40.cpp b/src/ov099/unk_ov099_02294c40.cpp
 index 835def6..2f46321 100644
 --- a/src/ov099/unk_ov099_02294c40.cpp
@@ -124,4 +147,6 @@ index 662180c..2535aa7 100644
              transitionState = 3;
              setPhase(1);
              nameBalloon.hide(1);
+-- 
+2.43.0
 
