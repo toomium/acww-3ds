@@ -34,6 +34,7 @@ sound on its DSP, the save and the ROM on the SD card.
 | **60 frames a second as the target** | The game draws a 3D picture every third frame; the port draws the pictures in between. 60 isn't reached everywhere yet. |
 | **Analog Circle Pad** | The player walks in any direction, not only the D-pad's eight, and as fast as the Circle Pad is tilted. |
 | **An options page** | A new tab in the pause menu, left of the pockets: L from the pockets, or touch its button. Its settings are kept in `acww.cfg`. |
+| **Main screen on top** | Normally you play on the bottom screen, with this option you put your town on the top screen. |
 | **Stacked fruit** | Optional, off by default: up to 9 of a fruit in one pocket slot. |
 | **New Leaf controls** | Optional, off by default: Y picks up items and pulls weeds, B only runs, X opens the pockets. |
 | **Other languages** | English, French, German, Italian or Spanish text, taken from your own copy of the European version. Only German has been tested so far. |
