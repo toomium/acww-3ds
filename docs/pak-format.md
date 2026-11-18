@@ -2,7 +2,7 @@
 
 `game.pak` is one file for the SD card (`sdmc:/3ds/acww/game.pak`): **the player's own ROM's files, without the
 game's code**. It is made from a ROM dump by the web builder (`web/js/pak.mjs`) or by `make pak ROM=...`, and read
-by the port in place of the ROM (`3ds_port/modern/host/card_pak.h`). It is game content: never commit it or pass it
+by the port in place of the ROM (`ports/common/overlay/modern/host/card_pak.h`). It is game content: never commit it or pass it
 on (`*.pak` is in `.gitignore`). The layout follows GabeSud0/pokeplatinum-3ds's data pack.
 
 ## Layout

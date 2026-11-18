@@ -1,0 +1,25 @@
+From: acww-3ds <noreply@invalid>
+Subject: [PATCH] SDL frontend: on the Switch ZL and ZR aren't the DS's L and R
+
+The Switch's controllers have L and R as shoulder buttons of their own; ZL and ZR are left to the port (ZR touches
+where the pointer on the right stick is, docked: gl_display.c), so the triggers' axes no longer press the DS's L and R
+there. Elsewhere (the PC's controllers) they still do.
+---
+ modern/host/frontend_sdl.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/modern/host/frontend_sdl.c b/modern/host/frontend_sdl.c
+index 8111c0b..599e71c 100644
+--- a/modern/host/frontend_sdl.c
++++ b/modern/host/frontend_sdl.c
+@@ -271,8 +271,10 @@ static uint32_t pad_keys(void) {
+         if (x < -DEAD) k |= 1u << 5;
+         if (y < -DEAD) k |= 1u << 6;
+         if (y > DEAD) k |= 1u << 7;
++#ifndef __SWITCH__  // (the Switch: ZL and ZR are the port's own, ZR the pointer's touch: gl_display.c)
+         if (SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > DEAD) k |= 1u << 8;
+         if (SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > DEAD) k |= 1u << 9;
++#endif
+     }
+     return k;
+ }

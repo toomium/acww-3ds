@@ -34,8 +34,9 @@ class BootstrapTest(unittest.TestCase):
 
         self.root = t / "repo"
         (self.root / "patches/acww-decomp").mkdir(parents=True)
-        (self.root / "3ds_port/sub").mkdir(parents=True)
-        (self.root / "3ds_port/sub/new.c").write_text("ours\n")
+        (self.root / "ports/common/overlay/sub").mkdir(parents=True)
+        (self.root / "ports/3ds/overlay").mkdir(parents=True)
+        (self.root / "ports/common/overlay/sub/new.c").write_text("ours\n")
         (self.root / "upstream.lock").write_text(f"# test\nurl=file:///nonexistent\ncommit={self.commit}\n")
         (self.up / "a.c").write_text("one\nTWO\nthree\n")
         patch = subprocess.run(["git", "diff"], cwd=self.up, capture_output=True, text=True).stdout
@@ -44,7 +45,7 @@ class BootstrapTest(unittest.TestCase):
 
         for name, value in [("ROOT", self.root), ("LOCK_FILE", self.root / "upstream.lock"),
                             ("UPSTREAM_DIR", self.root / "build/upstream"), ("PATCH_DIR", self.root / "patches/acww-decomp"),
-                            ("PORT_DIR", self.root / "3ds_port")]:
+                            ("PORTS_DIR", self.root / "ports")]:
             patcher = unittest.mock.patch.object(bootstrap, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -71,8 +72,8 @@ class BootstrapTest(unittest.TestCase):
 
     def test_second_run_refreshes_links_only(self):
         self.run_main("--source", str(self.up))
-        (self.root / "3ds_port/more.c").write_text("more\n")
-        (self.root / "3ds_port/sub/new.c").unlink()
+        (self.root / "ports/3ds/overlay/more.c").write_text("more\n")
+        (self.root / "ports/common/overlay/sub/new.c").unlink()
         out = self.run_main("--source", str(self.up))
         self.assertIn("already at", out)
         up = self.root / "build/upstream"
@@ -99,10 +100,24 @@ class BootstrapTest(unittest.TestCase):
             self.run_main("--source", str(self.up))
 
     def test_port_file_that_exists_upstream_is_refused(self):
-        (self.root / "3ds_port/a.c").write_text("clash\n")
+        (self.root / "ports/3ds/overlay/a.c").write_text("clash\n")
         with self.assertRaises(SystemExit) as cm:
             self.run_main("--source", str(self.up))
         self.assertIn("a.c", str(cm.exception))
+
+    def test_same_file_in_two_overlays_is_refused(self):
+        (self.root / "ports/3ds/overlay/sub").mkdir()
+        (self.root / "ports/3ds/overlay/sub/new.c").write_text("theirs\n")
+        with self.assertRaises(SystemExit) as cm:
+            self.run_main("--source", str(self.up))
+        self.assertIn("two overlays", str(cm.exception))
+
+    def test_files_outside_overlay_are_not_linked(self):
+        (self.root / "ports/3ds/cia").mkdir()
+        (self.root / "ports/3ds/cia/forwarder.c").write_text("not linked\n")
+        self.run_main("--source", str(self.up))
+        self.assertFalse(os.path.lexists(self.root / "build/upstream/cia/forwarder.c"))
+        self.assertFalse(os.path.lexists(self.root / "build/upstream/forwarder.c"))
 
 
 if __name__ == "__main__":

@@ -45,7 +45,7 @@ index 84af015f..3ea71415 100644
 +            __atomic_store_n(&sPieceRead[p], 1, __ATOMIC_RELEASE);
 +        }
 +}
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +// The enhanced port: the rest of the image read in the background, by a thread with its
 +// own file handle that runs while the game's waits, so that the game's loads find their files in memory. A piece the
 +// game asks for first it still reads itself; one read by both at once gets the same bytes twice.
@@ -103,13 +103,13 @@ index 84af015f..3ea71415 100644
 +    }
 +    fprintf(stderr, "card: the ROM image %s\n", sImage ? "held in memory" : "through a 1 MB cache");
 +    for (u32 i = 0; i < sizeof sHeader; i++) sHeader[i] = rom_byte(i);
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    if (sImage && !host_plat_thread_start(preload, 0)) fprintf(stderr, "card: no thread to read the image ahead\n");
 +#endif
  }
  
 -const u8 *host_rom(u32 *size) { *size = sRomSize; return sRom; }
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +#include "card_lang.h"
 +#endif
 +
@@ -153,8 +153,8 @@ index 9a40f2e8..64fdd08f 100644
  
  #include "host.h"
  #include "host_mem.h"
-+#ifdef N3DS_PORT
-+#include "options_3ds.h"
++#ifdef ENHANCED_PORT
++#include "options_cfg.h"
 +#endif
  #include "plat.h"
  #include "sys/CardCmd.h"
@@ -233,7 +233,7 @@ index 9a40f2e8..64fdd08f 100644
 +    double ms = (double)(host_plat_time_ns() - t0) * 1e-6;
 +    if (ms > 50) fprintf(stderr, "pxi7: the save file's %u bytes written in %.0f ms\n", len, ms);
 +}
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +// The enhanced port: the flush 30 frames after the last change writes in the background
 +// (pxi7_vblank), the changed range copied first, one write at a time; the others (the program's end, the home menu,
 +// sleep) wait for it and write at once.
@@ -247,7 +247,7 @@ index 9a40f2e8..64fdd08f 100644
 +}
 +#endif
 +void pxi7_save_flush(void) {
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    while (__atomic_load_n(&sWriting, __ATOMIC_ACQUIRE)) host_plat_sleep_ms(1);
 +#endif
 +    if (sDirtyLo >= sDirtyHi || !sSavePath) return;
@@ -306,7 +306,7 @@ index 9a40f2e8..64fdd08f 100644
      pxi7_send_after(11 | 1u << 5, 20000);
  }
  
-+// The enhanced port's save (N3DS_PORT: CARDi_RequestStreamCommand): a whole read (6) or
++// The enhanced port's save (ENHANCED_PORT: CARDi_RequestStreamCommand): a whole read (6) or
 +// write / program (7, 8) at once, not page by page through the ARM7 with a reply to wait for; a write's verify
 +// (mode 2) passes. `total`: the save memory's size (CARD_GetBackupTotalSize). The card's result code.
 +u32 pxi7_backup(uintptr_t src, uintptr_t dst, u32 len, u32 op, u32 total) {
@@ -341,7 +341,7 @@ index 9a40f2e8..64fdd08f 100644
 +    int lx = 0, ly = 0, down = frontend_touch(&lx, &ly);  // the viewer's mouse
 +    for (int i = 0; i < sTouchCount; i++)                 // ACWW_TOUCH
 +        if (f >= sTouch[i].frame && f < sTouch[i].frame + sTouch[i].len) down = 1, lx = (int)sTouch[i].x, ly = (int)sTouch[i].y;
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    opt_touch(&down, &lx, &ly);
 +#endif
 +    if (down) raw = tp_raw(lx, ly);
@@ -352,7 +352,7 @@ index 9a40f2e8..64fdd08f 100644
  }
  
  void pxi7_vblank(void) {
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    // (in the background when the file is there whole; a write still going: at a later frame)
 +    int writing = __atomic_load_n(&sWriting, __ATOMIC_ACQUIRE);
 +    if (sDirtyLo < sDirtyHi && host_frame() >= sFlushAt && sSaveFile && !writing) {

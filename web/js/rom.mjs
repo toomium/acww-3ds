@@ -30,8 +30,15 @@ export async function checkRom(bytes) {
   };
 }
 
-// The SD card's files: [{name, data}] for zipParts.
-export function sdFiles({ program, pak, cia }) {
+// Which console a program is for, from its header: "3ds" (a .3dsx), "switch" (a .nro) or "".
+export function programConsole(bytes) {
+  const at = (o) => (bytes.length < o + 4 ? "" : String.fromCharCode(...bytes.subarray(o, o + 4)));
+  return at(0) === "3DSX" ? "3ds" : at(0x10) === "NRO0" ? "switch" : "";
+}
+
+// The SD card's files: [{name, data}] for zipParts. console: "3ds" (default) or "switch".
+export function sdFiles({ console = "3ds", program, pak, cia }) {
+  if (console === "switch") return [{ name: "switch/acww/acww.nro", data: program }, { name: "switch/acww/game.pak", data: pak }];
   const files = [{ name: "3ds/acww/acww.3dsx", data: program }, { name: "3ds/acww/game.pak", data: pak }];
   if (cia) files.push({ name: "cias/acww.cia", data: cia });  // (the HOME Menu version, for FBI to install)
   return files;

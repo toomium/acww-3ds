@@ -1,0 +1,49 @@
+From: acww-3ds <noreply@invalid>
+Subject: [PATCH] SDL frontend: the console ports' left stick as the 3DS's circle pad (the analog walk)
+
+In the console ports (ENHANCED_PORT) the game walks by the circle pad's angle and tilt (frontend.c stick, from
+AcwwShm.stick_x / y); the SDL frontend, the Switch's, gave the left stick only as the D-pad's directions from half its
+tilt. Now the most tilted controller's left stick goes into stick_x / y (-156..156, y up, as the 3DS's) and its
+directions count from a smaller tilt (6000 of 32767). The PC build (no ENHANCED_PORT) keeps its D-pad from the stick.
+---
+ modern/host/frontend_sdl.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/modern/host/frontend_sdl.c b/modern/host/frontend_sdl.c
+index 599e71c..831ee29 100644
+--- a/modern/host/frontend_sdl.c
++++ b/modern/host/frontend_sdl.c
+@@ -260,13 +260,23 @@ static uint32_t keyboard_keys(void) {
+ }
+ 
+ static uint32_t pad_keys(void) {
++#ifdef ENHANCED_PORT
++    // the console ports: the left stick is the 3DS's circle pad too (AcwwShm.stick_x / y, -156..156, y up: frontend.c's
++    // analog walk), its directions from a smaller tilt (as the 3DS's circle pad gives them)
++    enum { DEAD = 6000 };
++    int sx = 0, sy = 0;
++#else
+     enum { DEAD = 16000 };
++#endif
+     uint32_t k = 0;
+     for (int p = 0; p < 4; p++) {
+         SDL_GameController *c = sPads[p];
+         if (!c) continue;
+         k |= ui_pad_keys(c);
+         int x = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTX), y = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTY);
++#ifdef ENHANCED_PORT
++        if (x * x + y * y > sx * sx + sy * sy) sx = x, sy = y;  // (of several controllers the one tilted most)
++#endif
+         if (x > DEAD) k |= 1u << 4;
+         if (x < -DEAD) k |= 1u << 5;
+         if (y < -DEAD) k |= 1u << 6;
+@@ -276,6 +286,9 @@ static uint32_t pad_keys(void) {
+         if (SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > DEAD) k |= 1u << 9;
+ #endif
+     }
++#ifdef ENHANCED_PORT
++    sShm->stick_x = (int16_t)(sx * 156 / 32767), sShm->stick_y = (int16_t)(-sy * 156 / 32767);
++#endif
+     return k;
+ }
+ 

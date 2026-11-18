@@ -4,9 +4,12 @@
 #   make game         the port for the 3DS (needs devkitPro with 3ds-dev):
 #                     build/upstream/build/host3ds_usa/acww.3dsx
 #                     (runs with your own ROM dump: README.md)
+#   make switch       the port for the Switch (needs devkitPro with switch-dev, switch-sdl2,
+#                     switch-mesa): build/upstream/build/hostswitch_usa/acww.nro (with game.pak
+#                     beside it in sdmc:/switch/acww/)
 #   make cia          the HOME Menu version: build/cia/acww.cia, a forwarder that opens
 #                     sdmc:/3ds/acww/acww.3dsx (no game code in it; needs devkitPro, git,
-#                     gcc, g++; builds makerom and bannertool once; placeholder art in cia/)
+#                     gcc, g++; builds makerom and bannertool once; placeholder art in ports/3ds/cia/)
 #   make cia ROM=...  that with the game's icon, taken from your ROM (not for release)
 #   make pak ROM=...  the data pack from your ROM, as the web builder makes it:
 #                     build/game.pak (game content: for your SD card only)
@@ -19,13 +22,13 @@
 #                     build/check/baseline.txt; prints what differs, exit 1 if any
 #   make check-baseline ROM=...   store the run as that baseline (do this on main,
 #                     before a change). Covers the game's code and the shared
-#                     runtime on the PC, NOT the 3DS-only code (N3DS_PORT: that
+#                     runtime on the PC, NOT the console ports' code (ENHANCED_PORT: that
 #                     needs Azahar or a console). Needs a ROM: not for CI.
 #   make clean
 #   (make with no target: make game)
 #
 # Run `python tools/bootstrap.py` once first (it fetches the decompilation,
-# applies patches/ and links 3ds_port/ in). Builds contain game code: they
+# applies patches/ and links ports/*/overlay/ in). Builds contain game code: they
 # are for your own use and must never be committed or shared (CONTRIBUTING.md).
 #
 # NINJAFLAGS passes options to ninja, for example: make game NINJAFLAGS=-j16
@@ -38,7 +41,7 @@ PORT_VERSION ?= dev-$(shell git rev-parse --short HEAD 2>/dev/null || echo unkno
 VERSION_H := $(UP)/modern/host/port_version.h
 NINJAFLAGS ?=
 
-.PHONY: all game pak cia pc test clean check-bootstrap check check-baseline
+.PHONY: all game switch pak cia pc test clean check-bootstrap check check-baseline version-header
 
 all: game
 
@@ -46,31 +49,40 @@ check-bootstrap:
 	@test -f $(UP)/tools/configure_host.py || \
 	    { echo "Run first: python tools/bootstrap.py"; exit 1; }
 
-game: check-bootstrap
+version-header: check-bootstrap
 	@echo '#define PORT_VERSION "$(PORT_VERSION)"' | cmp -s - $(VERSION_H) || \
 	    echo '#define PORT_VERSION "$(PORT_VERSION)"' > $(VERSION_H)
+
+game: version-header
 	cd $(UP) && python3 tools/configure_host.py --os 3ds
 	cd $(UP) && ninja -f build_host_3ds.ninja $(NINJAFLAGS)
 	@echo "Built $(UP)/build/host3ds_usa/acww.3dsx (contains game code: don't share it)"
 	@echo "It needs game.pak beside it in sdmc:/3ds/acww/ (make pak ROM=..., or the web builder; see README.md)"
 
+switch: version-header
+	cd $(UP) && python3 tools/configure_host.py --os switch
+	cd $(UP) && ninja -f build_host_switch.ninja $(NINJAFLAGS)
+	@echo "Built $(UP)/build/hostswitch_usa/acww.nro (contains game code: don't share it)"
+	@echo "It needs game.pak beside it in sdmc:/switch/acww/ (make pak ROM=..., or the web builder)"
+
 # The HOME Menu version. Nothing of the game is in it, so it needs no bootstrap: the forwarder (libctru only),
-# the icon and the banner from cia/'s pictures, a moment of silence as the banner's sound.
+# the icon and the banner from ports/3ds/cia/'s pictures, a moment of silence as the banner's sound.
 DKP ?= $(or $(DEVKITPRO),/opt/devkitpro)
 CIA := build/cia
 CIA_TOOLS := build/cia-tools
+CIA_SRC := ports/3ds/cia
 
 cia:
 	@bash tools/build_cia_tools.sh $(CIA_TOOLS)
 	@mkdir -p $(CIA)
 	$(DKP)/devkitARM/bin/arm-none-eabi-gcc -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft \
 	    -mword-relocations -ffunction-sections -D__3DS__ -O2 -Wall -I$(DKP)/libctru/include -specs=3dsx.specs \
-	    -Wl,--gc-sections -L$(DKP)/libctru/lib cia/forwarder.c -lctru -o $(CIA)/forwarder.elf
+	    -Wl,--gc-sections -L$(DKP)/libctru/lib $(CIA_SRC)/forwarder.c -lctru -o $(CIA)/forwarder.elf
 	$(DKP)/tools/bin/smdhtool --create "Animal Crossing: Wild World 3DS" "The 3DS port (HOME Menu version)" \
-	    "acww-3ds" cia/icon.png $(CIA)/acww.smdh
+	    "acww-3ds" $(CIA_SRC)/icon.png $(CIA)/acww.smdh
 	python3 -c "import wave; w = wave.open('$(CIA)/silence.wav', 'wb'); w.setnchannels(1); w.setsampwidth(2); w.setframerate(32000); w.writeframes(bytes(6400)); w.close()"
-	$(CIA_TOOLS)/bin/bannertool makebanner -i cia/banner.png -a $(CIA)/silence.wav -o $(CIA)/acww.bnr
-	$(CIA_TOOLS)/bin/makerom -f cia -o $(CIA)/acww.cia -target t -exefslogo -rsf cia/acww.rsf \
+	$(CIA_TOOLS)/bin/bannertool makebanner -i $(CIA_SRC)/banner.png -a $(CIA)/silence.wav -o $(CIA)/acww.bnr
+	$(CIA_TOOLS)/bin/makerom -f cia -o $(CIA)/acww.cia -target t -exefslogo -rsf $(CIA_SRC)/acww.rsf \
 	    -elf $(CIA)/forwarder.elf -icon $(CIA)/acww.smdh -banner $(CIA)/acww.bnr
 ifdef ROM
 	node tools/cia_icon.mjs $(CIA)/acww.cia "$(ROM)"

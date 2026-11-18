@@ -268,7 +268,7 @@ index 768f6aca..fc75b536 100644
 +    u32 bgMask[2], objMask[2];
 +    ObjLine obj0[2];
 +    int haveObj0[2], topEngine;
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    Gpu2dMarginAffine margin[2];
 +    int iris, menuWipe;
 +    const uint32_t *optPic;
@@ -285,12 +285,12 @@ index 768f6aca..fc75b536 100644
 +static u32 *record_line(int n, int line) { return sRecord[sRecording].lines[n][line]; }
 +static u32 record_changes_so_far(void) { return sRecord[sRecording].changes; }
 +
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +#include "gpu2d_direct.h"
 +#endif
 +static void record_start(const Gpu2dFrameInput *in) {
 +    Record *r = &sRecord[sRecording ^= 1];
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    memcpy(r->margin, sMargin, sizeof r->margin);
 +    sMargin[0].bg = sMargin[1].bg = 0;
 +    r->iris = sIris;
@@ -311,7 +311,7 @@ index 768f6aca..fc75b536 100644
 +}
 +__attribute__((noinline)) static void record_changes(const Gpu2dFrameInput *in) {  // (its loop gets the registers)
 +    Record *r = &sRecord[sRecording];
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    // The enhanced port: the game's only H-blank work is the sky's (Sky_HBlankMain,
 +    // Sky_HBlankSub), which changes the BG palettes' colour 0 (the backdrop) of both engines and registers; so only
 +    // those two palette words here, not the whole 4 KB of palettes and OAM after every line. shortcut: another change
@@ -392,7 +392,7 @@ index 768f6aca..fc75b536 100644
 +        sLayers->palette[n] = (const u8 *)r->final + 0x400 * n;
 +    }
 +    sLayers->topEngine = r->topEngine;
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    memcpy(sLayers->margin, r->margin, sizeof sLayers->margin);
 +    sLayers->iris = r->iris;
 +    sLayers->menuWipe = r->menuWipe;
@@ -524,12 +524,12 @@ index 8e54c9bc..15c338a8 100644
 +    uint16_t u, v;  // its pixels in the atlas
 +    uint8_t prio;
 +    uint8_t window;  // 1: an OBJ-window OBJ (it shapes the OBJ window, isn't shown)
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    uint8_t anchor;  // the UI element it belongs to (gpu2d_obj_anchors; 0 none)
 +    uint32_t hash;   // of what its pixels come from (the palette, attributes, tile bytes): the same, the same pixels
 +#endif
 +} Gpu2dSprite;
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +// The enhanced port's UI at the wide screens' edges: an element's anchor, the edges the
 +// host moves it to (by the margins' width), or GPU2D_NEAR | id << 5 (id 0-7): towards the edges its OBJs (those with
 +// that anchor) are in the outer third of
@@ -565,7 +565,7 @@ index 8e54c9bc..15c338a8 100644
 +    uint32_t *sprite;        // the OBJs as sprites (above; NULL: in `obj`)
 +    Gpu2dSprite sprites[2][128];  // per engine, in OAM order
 +    int nsprites[2];
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    Gpu2dMarginAffine margin[2];  // per engine, for this frame
 +    int iris;                     // the screen transitions' iris (gpu2d_iris) for this frame
 +    int menuWipe;                 // the menus' wipe (gpu2d_menu_wipe) for this frame
@@ -612,7 +612,7 @@ index 8e54c9bc..15c338a8 100644
 +// frame fields; not while the record after the next is made)
 +int gpu2d_record(void);
 +void gpu2d_draw_layers(int record);
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +// an affine BG's parameters on a line beyond the DS's screen (Gpu2dMarginAffine), given by the game before a frame (its
 +// V-blank) for that frame
 +void gpu2d_margin_affine(int engine, int bg, int line, int pa, int32_t x, int32_t y);
@@ -623,13 +623,13 @@ index 8e54c9bc..15c338a8 100644
 +// pos - (a zigzag of 24 lines up and 24 down), drawn by the host over the whole wide screen; given by the game at its
 +// V-blank, from the next frame on, kept while that window is on (-1 none)
 +void gpu2d_menu_wipe(int pos);
-+// the options page (modern/host/options_3ds.c): a 256x192 RGBA picture (0xRRGGBBAA; the page in lines 17-191, the pause
++// the options page (modern/host/options_cfg.c): a 256x192 RGBA picture (0xRRGGBBAA; the page in lines 17-191, the pause
 +// menu's button at (0, 0), 24x16), drawn over the bottom screen; serial changes whenever its pixels did (the host
 +// uploads it then), pageY the page's offset downwards (0 in place, 192 or more not shown: it slides); from the next
 +// frame on, kept until changed. The picture must stay as it is until two more serials have been given.
 +#define GPU2D_NO_BTN (-999)
 +void gpu2d_options(const uint32_t *pic, uint32_t serial, int pageY);
-+// (gpu2d_opt_button, n3ds_ui.h: the button's top line, as an OBJ: shown with the next OAM given, for that OAM only)
++// (gpu2d_opt_button, port_ui.h: the button's top line, as an OBJ: shown with the next OAM given, for that OAM only)
 +// the UI elements' anchors (Gpu2dSprite.anchor): one for each of an engine's 128 OAM entries, given with the OAM the game
 +// loads (0x400 bytes) at its V-blank; an entry keeps its anchor while OAM holds what it held then
 +void gpu2d_obj_anchors(int engine, const void *oam, const uint8_t *anchors);
@@ -665,7 +665,7 @@ index aa0663c2..dcf79665 100644
      const u8 *objExtPal;       // the 8 KB extended OBJ palette (NULL: not mapped)
      const u8 *palette;         // 0x400 bytes: BG palette, then OBJ palette
      const u8 *oam;             // 0x400 bytes
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    const u8 *objAnchor;       // each OAM entry's anchor (gpu2d_obj_anchors) for this frame
 +#endif
      // the affine BGs' internal reference points (BG2, BG3) for line refLine: from BGxX/BGxY at the frame's start,
@@ -773,13 +773,13 @@ index 940d77d9..293bff30 100644
 +        Gpu2dSprite *s = &out[n++];
 +        s->x = (int16_t)x0, s->y = (int16_t)y0, s->w = (uint16_t)bw, s->h = (uint16_t)bh;
 +        s->u = (uint16_t)*ax, s->v = (uint16_t)*ay, s->prio = (uint8_t)(a2 >> 10 & 3), s->window = mode == 2;
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +        s->anchor = e->objAnchor ? e->objAnchor[i] : 0;
 +#endif
 +        u32 hash = ((palHash ^ a0) * 16777619u ^ a1) * 16777619u ^ a2;
 +        if (!affine && mode != 3 && !((a0 & 0x2000) && (dispcnt & 1u << 31))) {
 +            hash = sprite_tiles(e, dispcnt, a0, a1, a2, w, h, pal, atlas + *ay * GPU2D_ATLAS_W + *ax, hash);
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +            s->hash = hash;
 +#endif
 +            *ax += bw;
@@ -816,7 +816,7 @@ index 940d77d9..293bff30 100644
 +            }
 +            for (s32 px = 0; px < bw; px++) hash = (hash ^ d[px]) * 16777619u;  // (the pixels themselves here)
 +        }
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +        s->hash = hash;
 +#endif
 +        *ax += bw;

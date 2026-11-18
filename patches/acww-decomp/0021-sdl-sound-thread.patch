@@ -1,0 +1,50 @@
+From: acww-3ds <noreply@invalid>
+Subject: [PATCH] SDL frontend: frontend_audio_pump for the console ports' sound thread
+
+The console ports' sound thread (snd7/driver_thread.h, ENHANCED_PORT) asks the frontend how many frames still wait in
+the ring and mixes ahead while there are fewer than it wants. The SDL frontend counts what its callback hasn't taken;
+without a sound device, or with one that took nothing for 250 ms, it plays the ring by the clock, as frontend_3ds.c
+does without the DSP. Without that the thread stopped and the game waited for its answers at start-up (the Switch in
+Eden run without the host's sound, flatpak --nosocket=pulseaudio: its SDL callback never ran; a black screen with no
+layers on). The callback's own path is unchecked until a run on a console.
+---
+ modern/host/frontend_sdl.c | 26 ++++++++++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/modern/host/frontend_sdl.c b/modern/host/frontend_sdl.c
+index 769b34e..5b96ee2 100644
+--- a/modern/host/frontend_sdl.c
++++ b/modern/host/frontend_sdl.c
+@@ -91,6 +91,32 @@ static void audio_callback(void *user, Uint8 *stream, int len) {
+     __atomic_store_n(&shm->audio_read, r, __ATOMIC_RELEASE);
+ }
+ 
++#ifdef ENHANCED_PORT
++// The console ports' sound thread (snd7/driver_thread.h) mixes ahead while fewer frames than it wants wait in the
++// ring: the frames the callback hasn't taken yet. Without a sound device, or with one that has taken nothing for a
++// quarter of a second (Eden's when it has no sound output itself), the ring is played by the clock instead, as
++// frontend_3ds.c does without the DSP: else the thread stops, and the game waits for its answers.
++int frontend_audio_pump(void) {
++    AcwwShm *shm = sShm;
++    if (!shm) return 0;
++    uint32_t w = __atomic_load_n(&shm->audio_write, __ATOMIC_ACQUIRE), r = __atomic_load_n(&shm->audio_read, __ATOMIC_ACQUIRE);
++    static uint32_t lastRead;
++    static uint64_t last, moved;
++    uint64_t now = host_plat_time_ns();
++    if (r != lastRead) lastRead = r, moved = now;  // (the callback took frames)
++    if (!sDev || now - moved > 250000000u) {
++        uint64_t played = last ? (now - last) * ACWW_AUDIO_RATE / 1000000000u : 0;
++        if (played || !last) last = now;
++        r = played >= w - r ? w : r + (uint32_t)played;
++        __atomic_store_n(&shm->audio_read, r, __ATOMIC_RELEASE);
++        lastRead = r;
++    } else {
++        last = now;
++    }
++    return (int)(w - r);
++}
++#endif
++
+ #if defined(__APPLE__)
+ static SDL_MetalView sMetalView;  // (the window's Metal view, wgpu_display.c's surface)
+ #endif

@@ -1,0 +1,221 @@
+From: acww-3ds <noreply@invalid>
+Subject: [PATCH] Switch: the build (configure_host.py --os switch) and the host blocks allocated at start-up
+
+configure_host.py --os switch builds the console port (ENHANCED_PORT) for the Nintendo Switch with devkitPro's
+devkitA64, libnx and the portlibs' SDL2 (the SDL frontend, the CPU renderers): build_host_switch.ninja,
+build/hostswitch_<v>/acww.nro, with nacptool's title and libnx's default icon. The platform layer
+(modern/host/plat_switch.c) and the GPU interface's file (gpu3d/gpu3d_gl.c) are the port repository's own files.
+
+include/host_mem.h: on the Switch too the blocks aligned more than a page (DTCM, ITCM, main RAM, the VRAM banks) are
+allocated at start-up (HOST_MEM_RUNTIME_ALIGN, as on Windows and macOS). With the 2 MB aligned main RAM block, .bss
+started after a gap of 316 KB, and Eden mapped the module about that much short: fopen jumped to address 0, libnx's
+devoptab devices lay past the mapping. That its loader sizes the bss from the module's __bss_start__ is inferred from
+the sizes, not read in its source; the console's loader is unchecked. The game's units get -D__SWITCH__ for it.
+---
+ include/host_mem.h      |  5 +--
+ tools/configure_host.py | 71 +++++++++++++++++++++++++++++++++--------
+ 2 files changed, 61 insertions(+), 15 deletions(-)
+
+diff --git a/include/host_mem.h b/include/host_mem.h
+index 93c020c..c7c5781 100644
+--- a/include/host_mem.h
++++ b/include/host_mem.h
+@@ -77,8 +77,9 @@ extern HostSysWork gHostSysWork;
+ // HOST_MEM_RUNTIME_ALIGN (Windows, macOS): COFF objects can't ask for more than 8 KB of alignment, Mach-O ones for
+ // more than 32 KB, so the blocks aligned more (DTCM, ITCM, the main RAM block; vram.c's banks and windows) are
+ // allocated at start-up (HostMem_Init, from main.c's early_init) and their names stand for the allocations (sizeof
+-// still gives the block's size)
+-#if defined(_WIN32) || defined(__APPLE__)
++// still gives the block's size). The Switch too: with a 2 MB aligned .bss, Eden left the bss's last part unmapped
++// (about the gap before it: 2026-11-18)
++#if defined(_WIN32) || defined(__APPLE__) || defined(__SWITCH__)
+ #define HOST_MEM_RUNTIME_ALIGN 1
+ #else
+ #define HOST_MEM_RUNTIME_ALIGN 0
+diff --git a/tools/configure_host.py b/tools/configure_host.py
+index 532a7e6..692b242 100644
+--- a/tools/configure_host.py
++++ b/tools/configure_host.py
+@@ -55,13 +55,15 @@ parser.add_argument("--cross", default=os.path.expanduser(
+ parser.add_argument("--qemu", default=os.path.expanduser("~/acww/toolchains/qemu/usr/bin/qemu-aarch64"),
+                     help="--arch aarch64: qemu-aarch64 (user mode) for running the tests (the game: ACWW_RUNNER, "
+                          "tools/host_oracle.sh)")
+-parser.add_argument("--os", choices=["linux", "windows", "macos", "3ds"], default="macos" if sys.platform == "darwin" else "linux",
++parser.add_argument("--os", choices=["linux", "windows", "macos", "3ds", "switch"], default="macos" if sys.platform == "darwin" else "linux",
+                     help="windows (with --arch x86_64): a cross build for x86-64 Windows with llvm-mingw (clang, UCRT, "
+                          "libc++, lld; --mingw): build_host_win64.ninja, build/hostwin64_<v>/acww.exe, headless only "
+                          "(no frontend yet), run with Wine here (ACWW_RUNNER; docs/host.md); macos (the default on a "
+                          "Mac): a native build for the Mac's own architecture with Apple's clang, SDL2 from pkg-config "
+                          "(Homebrew): build_host64.ninja, build/host64_<v>; 3ds: the Nintendo 3DS with devkitPro's devkitARM and "
+-                         "libctru ($DEVKITPRO, default /opt/devkitpro): build_host_3ds.ninja, build/host3ds_<v>/acww.3dsx")
++                         "libctru ($DEVKITPRO, default /opt/devkitpro): build_host_3ds.ninja, build/host3ds_<v>/acww.3dsx; switch: "
++                         "the Nintendo Switch with devkitPro's devkitA64, libnx and the portlibs' SDL2: "
++                         "build_host_switch.ninja, build/hostswitch_<v>/acww.nro")
+ parser.add_argument("--mingw", default="",
+                     help="the llvm-mingw directory for --os windows (default: the newest ~/acww/toolchains/llvm-mingw-*)")
+ parser.add_argument("--extra-cflags", default="",
+@@ -100,7 +102,17 @@ if N3DS:
+     if not os.path.exists(f"{DKA}/bin/arm-none-eabi-gcc") or not os.path.exists(f"{DKP}/libctru/lib/libctru.a"):
+         sys.exit(f"--os 3ds: no devkitARM and libctru in {DKP} (DEVKITPRO, DEVKITARM; `dkp-pacman -S 3ds-dev`)")
+     args.cc = f"{DKA}/bin/arm-none-eabi-gcc"
+-PORT = N3DS  # the 3DS port itself (ENHANCED_PORT); the PC build compiles the same sources without it
++SWITCH = args.os == "switch"
++if SWITCH:
++    if args.guards or args.oracle or args.sanitize or args.cc != "gcc":
++        sys.exit("--os switch: no --guards, --oracle, --sanitize or --cc (devkitA64's GCC)")
++    DKA64 = os.environ.get("DEVKITA64", f"{DKP}/devkitA64")
++    if not os.path.exists(f"{DKA64}/bin/aarch64-none-elf-gcc") or not os.path.exists(f"{DKP}/libnx/lib/libnx.a") \
++            or not os.path.exists(f"{DKP}/portlibs/switch/lib/libSDL2.a"):
++        sys.exit(f"--os switch: no devkitA64, libnx and SDL2 in {DKP} (DEVKITPRO, DEVKITA64; "
++                 "`dkp-pacman -S switch-dev switch-sdl2 switch-mesa`)")
++    args.cc = f"{DKA64}/bin/aarch64-none-elf-gcc"
++PORT = N3DS or SWITCH  # the console ports (ENHANCED_PORT); the PC build compiles the same sources without it
+ if MAC:
+     if args.guards or args.oracle:
+         sys.exit("--os macos: no --guards or --oracle (GNU ld / melonDS builds)")
+@@ -147,8 +159,8 @@ if SANITIZE:
+         sys.exit("--sanitize and --guards don't combine")
+     if not args.suffix:
+         args.suffix = "_asan"
+-X64 = args.arch == "x86_64" and not N3DS
+-HOST64 = X64 or A64  # a 64-bit build (the build directory's and the ninja file's names apart)
++X64 = args.arch == "x86_64" and not N3DS and not SWITCH
++HOST64 = X64 or A64 or SWITCH  # a 64-bit build (the build directory's and the ninja file's names apart)
+ CXX = "g++"
+ if MAC:
+     CXX = "clang++"
+@@ -160,6 +172,10 @@ elif A64:
+     CXX = f"{args.cross}/bin/aarch64-none-linux-gnu-g++"
+     build = Path("build") / f"hosta64{args.suffix}_{args.version}"
+     NINJA_FILE = f"build_host_a64{args.suffix}.ninja"
++elif SWITCH:
++    CXX = f"{DKA64}/bin/aarch64-none-elf-g++"
++    build = Path("build") / f"hostswitch{args.suffix}_{args.version}"
++    NINJA_FILE = f"build_host_switch{args.suffix}.ninja"
+ elif N3DS:
+     CXX = f"{DKA}/bin/arm-none-eabi-g++"
+     build = Path("build") / f"host3ds{args.suffix}_{args.version}"
+@@ -175,7 +191,9 @@ else:
+ R = args.sysroot
+ G = f"{R}/usr/lib/gcc/x86_64-linux-gnu/15/32"
+ # (the 3DS: devkitPro's flags for its ARM11; -mword-relocations: what 3dsxtool can relocate)
++# (the Switch: libnx's switch_rules for its Cortex-A57; a PIE, as every libnx program)
+ M_FLAG = "-march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mword-relocations" if N3DS else \
++    "-march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft" if SWITCH else \
+     "" if MAC or A64 else "-m64" if X64 else "-m32"
+ # the compiler command; clang is told its target (llvm-mingw's clang is a cross compiler for Windows too; on Linux it
+ # finds the system's GCC installation for the host runtime's headers and libraries)
+@@ -195,8 +213,10 @@ GAME_FLAGS = " ".join([
+     # (caused a crash on the 3DS in function "runChosenTopic")
+     "-ftrivial-auto-var-init=zero",
+ ])
+-if N3DS:
+-    # the game optimised further on the 3DS's slow CPU, without frame pointers (no backtraces there: plat_3ds.c)
++if SWITCH:
++    GAME_FLAGS += " -D__SWITCH__"  # (include/host_mem.h: the host's blocks allocated at start-up, as the runtime has them)
++if N3DS or SWITCH:
++    # the game optimised further on the consoles' slow CPUs, without frame pointers (no backtraces there: plat_3ds.c)
+     GAME_FLAGS = GAME_FLAGS.replace(" -O1 ", " -O2 ").replace(" -fno-omit-frame-pointer ", " -fomit-frame-pointer ")
+ if WIN:
+     # GCC's bitfield layout, not Microsoft's: the save data's layout (its static_asserts) needs it
+@@ -214,7 +234,7 @@ CXX_FLAGS += " -femit-class-debug-always"
+ if args.guards:
+     # a section per variable: tools/host_guards.py puts a guard after each
+     GAME_FLAGS += " -fdata-sections"
+-if A64 or MAC:
++if A64 or MAC or SWITCH:
+     # no fused multiply-adds (GCC contracts a * b + c by default on arm64, x86-64 has no FMA without -mfma): the
+     # same floating-point results as the x86 builds
+     GAME_FLAGS += " -ffp-contract=off"
+@@ -274,13 +294,15 @@ def find_sdl2():
+         if os.path.exists(f"{d}/SDL.h"):
+             return [d]
+     return tree(os.path.expanduser("~/acww/toolchains/sdl2-dev"))
+-SDL2_DIRS = find_sdl2() if (X64 or MAC) and not WIN else None
++SDL2_DIRS = find_sdl2() if (X64 or MAC) and not WIN else [f"{DKP}/portlibs/switch/include/SDL2"] if SWITCH else None
+ SDL2 = bool(SDL2_DIRS)
+ FRONTEND_FLAG = " -DHOST_FRONTEND_3DS=1" if N3DS else " -DHOST_FRONTEND_SDL=1" if SDL2 else \
+     " -DHOST_FRONTEND_NONE=1" if HOST64 else ""
+ # (SDL_syswm.h, for the window's native handles: modern/host/x11shim stands in for the X11 headers)
+ SDL_CFLAGS = " ".join(f"-I{d}" for d in SDL2_DIRS) + " -Imodern/host/x11shim" if SDL2 else ""
+ SDL_LIBS = "-l:libSDL2-2.0.so.0" if SDL2 else ""
++if SWITCH:  # (the portlibs' static SDL2 on EGL and Mesa's nouveau: sdl2-config --libs; GLESv2: gpu3d_gl.c)
++    SDL_LIBS = "-lSDL2 -lGLESv2 -lEGL -lglapi -ldrm_nouveau"
+ if MAC and SDL2:
+     SDL_LIBS = subprocess.run(["pkg-config", "--libs", "sdl2"], capture_output=True, text=True).stdout.strip() or "-lSDL2"
+ if MAC:
+@@ -305,6 +327,14 @@ elif N3DS:
+         HOST_FLAGS += " -DENHANCED_PORT"
+         HOST_CXX_FLAGS += " -DENHANCED_PORT"
+     MELON_LIBS = ""
++elif SWITCH:
++    # newlib and libnx (devkitPro); no POSIX signals for the debugging aids (debug_posix.c)
++    SWITCH_I = f"-D__SWITCH__ -D_REENTRANT -isystem {DKP}/libnx/include -I{DKP}/portlibs/switch/include"
++    HOST_FLAGS = (f"{M_FLAG} -fPIE -ftls-model=local-exec -O2 -g -fomit-frame-pointer -Wall -std=gnu11 -DHOST -Iinclude "
++                  f"{SWITCH_I} -DHOST_DEBUG_POSIX=0 -DENHANCED_PORT" + FRONTEND_FLAG)
++    LINK_FLAGS = f"-specs={DKP}/libnx/switch.specs {M_FLAG} -fPIE -L{DKP}/portlibs/switch/lib -L{DKP}/libnx/lib"
++    HOST_CXX_FLAGS = f"{M_FLAG} -fPIE -ftls-model=local-exec -O1 -g -std=c++17 -DHOST {SWITCH_I} -DENHANCED_PORT"
++    MELON_LIBS = ""
+ elif A64:
+     # the cross toolchain's glibc; melonDS's core cross-built for aarch64 (build-core-a64: without the JIT and the GDB
+     # stub, -ffp-contract=off; tools/host/aarch64-linux.toolchain.cmake, docs/host.md)
+@@ -411,6 +441,7 @@ def main():
+         n.rule("hostcxx", f"{CXX} {HOST_CXX_FLAGS} -MMD -MF $out.d -c $in -o $out", depfile="$out.d", deps="gcc",
+                description="HOSTCXX $in")
+         libs = " -lws2_32" if WIN else f" {SDL_LIBS} -lc++ -lpthread -lm" if MAC else " -lcitro3d -lctru -lm" if N3DS else \
++            f" {SDL_LIBS} -lstdc++ -lnx -lpthread -lm" if SWITCH else \
+             f" {SDL_LIBS} -lstdc++ -lpthread -lm -lc -lgcc"  # (ws2_32: wm7.c's sockets)
+         n.rule("link", f"{CXX} {LINK_FLAGS} -o $out @$objects {MELON_LIBS}{WGPU_LIBS}{libs}", description="LINK $out")
+         objs = []
+@@ -429,8 +460,12 @@ def main():
+             if N3DS and s.name in ("frontend_sdl.c", "frontend_ui.c", "frontend_viewer.c", "plat_posix.c",
+                                    "plat_win32.c"):
+                 continue
++            if SWITCH and s.name in ("frontend_viewer.c", "plat_posix.c", "plat_win32.c"):
++                continue
+             if not N3DS and s.name in ("plat_3ds.c", "frontend_3ds.c"):
+                 continue
++            if not SWITCH and s.name == "plat_switch.c":
++                continue
+             if s.name in (("melon_none.c",) if args.oracle else ("melon.cpp", "melon_platform.cpp")):
+                 continue  # (melonDS, or the stand-in that refuses it: --oracle)
+             o = str(build / s.with_suffix(".o"))
+@@ -532,7 +567,7 @@ def main():
+         # (the game's C library names don't clash with the host's: include/host_libc_rename.h)
+         objects_file = build / "objects.txt"
+         objects_file.write_text("".join(f"{Path(o).as_posix()}\n" for o in link_objs))
+-        exe = str(build / ("acww.exe" if WIN else "acww.elf" if N3DS else "acww"))
++        exe = str(build / ("acww.exe" if WIN else "acww.elf" if N3DS or SWITCH else "acww"))
+         n.build(exe, "link", link_objs, implicit=[str(objects_file)], variables={"objects": str(objects_file)})
+         if N3DS:
+             # the homebrew launcher's program: the .3dsx with its title and icon (the .smdh), as $DEVKITARM/3ds_rules
+@@ -549,7 +584,17 @@ def main():
+         vdirs = find_sdl2() or []
+         vflags = " ".join(f"-I{os.path.dirname(d) if os.path.exists(d + '/SDL.h') else d}" for d in vdirs)
+         n.rule("viewer", f"gcc -O2 {vflags} $in -o $out -l:libSDL2-2.0.so.0", description="VIEWER $out")
+-        if N3DS:
++        if SWITCH:
++            # the homebrew menu's program: the .nro with its title and icon (the .nacp), as libnx's switch_rules
++            nacp, nro = str(build / "acww.nacp"), str(build / "acww.nro")
++            n.rule("nacp", f'{DKP}/tools/bin/nacptool --create "Animal Crossing WW" "acww-port" "{args.version}" $out',
++                   description="NACP $out")
++            n.build(nacp, "nacp")
++            n.rule("nro", f"{DKP}/tools/bin/elf2nro $in $out --nacp=$nacp --icon={DKP}/libnx/default_icon.jpg",
++                   description="NRO $out")
++            n.build(nro, "nro", exe, implicit=[nacp], variables={"nacp": nacp})
++            n.default([nro])
++        elif N3DS:
+             n.default([str(build / "acww.3dsx")])
+         elif WIN or MAC:
+             n.default([exe])
+@@ -584,8 +629,8 @@ def main():
+ def summary():
+     """What the build has, and what to do about what it hasn't."""
+     print(f"configure_host.py: {NINJA_FILE}: build with `ninja -f {NINJA_FILE}`, the game: {build}/"
+-          f"{'acww.exe' if WIN else 'acww.3dsx' if N3DS else 'acww'}")
+-    if (HOST64 or MAC) and not WIN:
++          f"{'acww.exe' if WIN else 'acww.3dsx' if N3DS else 'acww.nro' if SWITCH else 'acww'}")
++    if (HOST64 or MAC) and not WIN and not SWITCH:
+         print("  window: " + ("SDL2" if SDL2 else
+               "none, headless only - install SDL2's development files (e.g. libsdl2-dev) or give --sdl2"))
+         print("  GPU renderer: " + ("wgpu-native" if WGPU else

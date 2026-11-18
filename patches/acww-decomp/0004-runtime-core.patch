@@ -258,7 +258,7 @@ index 35577afe..0868ccb6 100644
      }
 +    thread_stopped();
 +}
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +// The enhanced port's log: stderr goes into memory (plat_3ds.c), and this thread writes it out
 +// four times a second: a write to the 3DS's SD card took 20-140 ms, now and then 10 s. What a crash leaves unwritten
 +// is lost.
@@ -299,7 +299,7 @@ index 35577afe..0868ccb6 100644
 +            watchdogOn = 1;
 +            watchdog_start();
 +        }
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +        // (from frame 600 on: the start's ROM reads took 10 s on hardware once the log's thread wrote to the SD card
 +        // beside them, unverified as the cause; until then the buffer holds the lines)
 +        static int logThread;
@@ -634,7 +634,7 @@ index 51ed0877..cecd03fe 100644
 +// zeros). A granule that keeps its bank would get back what it holds. (So a write the game makes where no bank
 +// shows stays until a bank shows there, not until the next VRAMCNT change; neither happens on the DS, where it is
 +// lost. Remapping everything moved megabytes at each change, several a frame when the game loads textures.)
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +// the uploads since the 3D renderer last took them (host_vram_take_uploads, gpu3d_tex.h): bank, offset, bytes; -1
 +// after a remap or more than fit (it then takes the texture slots in full)
 +enum { MAX_UPLOADS = 64 };
@@ -652,7 +652,7 @@ index 51ed0877..cecd03fe 100644
 -    for (int g = 0; g < NGRAN; g++) sGran[g].bank = -1;
 +    HOST_PROF(PROF_VRAM);
 +    sGeneration++;
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    sNUploads = -1;
 +#endif
 +    static struct { s32 bank; u32 off; } now[NGRAN];
@@ -689,14 +689,14 @@ index 51ed0877..cecd03fe 100644
      remap();
  }
  
-+// The enhanced port's texture uploads (N3DS_PORT: GX_LoadTex, GX_LoadTexPltt): an LCDC address of a bank in the
++// The enhanced port's texture uploads (ENHANCED_PORT: GX_LoadTex, GX_LoadTexPltt): an LCDC address of a bank in the
 +// bank's own memory, where the renderers read it (the banks stay mapped to the texture slots, out of the CPU's
 +// windows); the renderers told that the textures changed (the generation) and where (len bytes from a)
 +void *host_vram_lcdc_direct(unsigned int a, unsigned int len) {
 +    for (int i = 0; i < 9; i++)
 +        if (a >= kLcdc[i] && a - kLcdc[i] < kSize[i]) {
 +            sGeneration++;
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +            if (sNUploads >= 0 && sNUploads < MAX_UPLOADS) {
 +                u32 off = a - kLcdc[i];
 +                sUploads[sNUploads][0] = (unsigned)i, sUploads[sNUploads][1] = off;

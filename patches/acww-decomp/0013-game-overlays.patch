@@ -12,7 +12,7 @@ index 544d19b9..fb1e17c7 100644
  // mwcc-version: 1.2/base
  // mwcc-flags: -str reuse
  #include "types.h"
-+#include "n3ds_options.h"
++#include "port_options.h"
  #include "room/FtrManager.h"
  #include "sys/NNSFndArchive.h"
  #include "gfx/VecFx32.h"
@@ -20,7 +20,7 @@ index 544d19b9..fb1e17c7 100644
          }
          {
              BOOL ok;
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +            if (Pocket_FindEmpty() == -1 && Pocket_FindFruitStack(&o->actionItem) == -1) {  // (or onto a fruit stack)
 +#else
              if (Pocket_FindEmpty() == -1) {
@@ -36,15 +36,15 @@ index 3e30828a..c0e15516 100644
  #include "proto/main/unk_0209eb94.h"
  #include "proto/main/unk_020b7d84.h"
  #include "proto/ov090/unk_ov090_022918e0.h"
-+#ifdef N3DS_PORT
-+#include "n3ds_ui.h"
++#ifdef ENHANCED_PORT
++#include "port_ui.h"
 +#include "proto/main/unk_020501d4.h"
 +#include "text/Unk_02050288.h"
-+void N3ds_MenuTabBarStep(MenuTabBar *s);  // modern/n3ds/menu_tab_bar.cpp: the options page's turn each frame
-+#define N3DS_MENU_STATE() n3ds_menu_state(1, visible, slideY, curTab)
-+#define N3DS_IS_TAB(i) ((i) <= 6 || (i) == N3DS_OPT_TAB)  // (the options page: one more tab)
++void Port_MenuTabBarStep(MenuTabBar *s);  // modern/port/menu_tab_bar.cpp: the options page's turn each frame
++#define PORT_MENU_STATE() port_menu_state(1, visible, slideY, curTab)
++#define PORT_IS_TAB(i) ((i) <= 6 || (i) == PORT_OPT_TAB)  // (the options page: one more tab)
 +#else
-+#define N3DS_IS_TAB(i) ((i) <= 6)
++#define PORT_IS_TAB(i) ((i) <= 6)
 +#endif
  
  extern "C" {
@@ -53,12 +53,12 @@ index 3e30828a..c0e15516 100644
      MenuCtrl_ClearSavedSlot();
      Snd_BeginMenuDuck();
      MenuCtrl_SyncFromInputMode();
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    {
 +        GameFontDesc *fd = (GameFontDesc *)&gFontA;
-+        n3ds_menu_font(fd->header, fd->glyphs, fd->bitmaps);
++        port_menu_font(fd->header, fd->glyphs, fd->bitmaps);
 +    }
-+    N3DS_MENU_STATE();
++    PORT_MENU_STATE();
 +#endif
      return TRUE;
  }
@@ -67,8 +67,8 @@ index 3e30828a..c0e15516 100644
      releaseResources();
      Snd_EndMenuDuck();
      MenuCtrl_ClearSyncMsgMenu();
-+#ifdef N3DS_PORT
-+    n3ds_menu_state(0, 0, 0, 0);
++#ifdef ENHANCED_PORT
++    port_menu_state(0, 0, 0, 0);
 +#endif
      return TRUE;
  }
@@ -77,7 +77,7 @@ index 3e30828a..c0e15516 100644
          Oam_DrawObj(1, &sTabBarOamCells[j * 2], 0x80, slideY + 0x50, -1, 2, NULL);
          Oam_DrawObj(1, &sTabBarOamCells[(j + 1) * 2], 0x80, slideY + 0x50, -1, 2, NULL);
      }
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    gpu2d_opt_button(slideY - 15);  // (the tabs' tops)
 +#endif
      return TRUE;
@@ -87,8 +87,8 @@ index 3e30828a..c0e15516 100644
                                             &MenuTabBar::stateSlideOut};
      cancelVramTasks();
      (this->*tbl[transitionState])();
-+#ifdef N3DS_PORT
-+    N3DS_MENU_STATE();
++#ifdef ENHANCED_PORT
++    PORT_MENU_STATE();
 +#endif
      return TRUE;
  }
@@ -97,9 +97,9 @@ index 3e30828a..c0e15516 100644
              Snd_PlaySe(3);
          }
      }
-+#ifdef N3DS_PORT
-+    N3DS_MENU_STATE();
-+    N3ds_MenuTabBarStep(this);
++#ifdef ENHANCED_PORT
++    PORT_MENU_STATE();
++    Port_MenuTabBarStep(this);
 +#endif
      return TRUE;
  }
@@ -109,7 +109,7 @@ index 3e30828a..c0e15516 100644
          data_021c1b3c->mixer.endMenuDuck();
      } else {
 -        if (idx <= 6 && old <= 6) {
-+        if (N3DS_IS_TAB(idx) && N3DS_IS_TAB(old)) {
++        if (PORT_IS_TAB(idx) && PORT_IS_TAB(old)) {
              Snd_PlaySe(3);
          }
      }
@@ -117,7 +117,7 @@ index 3e30828a..c0e15516 100644
          MenuCtrl_ClearSavedSlot();
      }
 -    if (old <= 6 && idx <= 6) {
-+    if (N3DS_IS_TAB(old) && N3DS_IS_TAB(idx)) {
++    if (PORT_IS_TAB(old) && PORT_IS_TAB(idx)) {
          lrSwitchEnabled = 1;
      }
  }
@@ -125,8 +125,8 @@ index 3e30828a..c0e15516 100644
      case 12:
      case 13:
      case 14:
-+#ifdef N3DS_PORT
-+    case N3DS_OPT_TAB:
++#ifdef ENHANCED_PORT
++    case PORT_OPT_TAB:
 +#endif
          mainState = 1;
          break;
@@ -135,9 +135,9 @@ index 3e30828a..c0e15516 100644
              MenuCtrl_RequestOpenNested(0x2b);
              MenuCtrl_SetMode(curTab);
              break;
-+#ifdef N3DS_PORT
-+        case N3DS_OPT_TAB:
-+            n3ds_menu_page();
++#ifdef ENHANCED_PORT
++        case PORT_OPT_TAB:
++            port_menu_page();
 +            break;
 +#endif
          case 7:
@@ -147,9 +147,9 @@ index 3e30828a..c0e15516 100644
      if (lim > 0x10) {
          return -1;
      }
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    if (v >= 26 && v < 50) {  // the options page's button
-+        return N3DS_OPT_TAB;
++        return PORT_OPT_TAB;
 +    }
 +#endif
      if (v < 0x35) {
@@ -159,8 +159,8 @@ index 3e30828a..c0e15516 100644
  void MenuTabBar::hideTabs() { tabsShown = 0; }
  
  extern "C" s32 MenuTabBar_GetTabX(s32 a) {
-+#ifdef N3DS_PORT
-+    if (a == N3DS_OPT_TAB) {
++#ifdef ENHANCED_PORT
++    if (a == PORT_OPT_TAB) {
 +        return 0x26;  // (the options button's middle, x 26-49: the tabs' are their left + 12, as 0x3f)
 +    }
 +#endif
@@ -172,14 +172,14 @@ index 3e30828a..c0e15516 100644
  
 +// (the port: the options page between the friends and the pockets)
  extern "C" u8 MenuTabBar_PrevTab(u8 a) {
-+#ifdef N3DS_PORT
-+    if (a == N3DS_OPT_TAB) {
++#ifdef ENHANCED_PORT
++    if (a == PORT_OPT_TAB) {
 +        sTabSwitchCooldown = 10;
 +        return 6;
 +    }
 +    if (a == 0) {
 +        sTabSwitchCooldown = 10;
-+        return N3DS_OPT_TAB;
++        return PORT_OPT_TAB;
 +    }
 +#endif
      if (a <= 6) {
@@ -189,11 +189,11 @@ index 3e30828a..c0e15516 100644
  
  extern "C" u8 MenuTabBar_NextTab(u8 a) {
      sTabSwitchCooldown = 10;
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    if (a == 6) {
-+        return N3DS_OPT_TAB;
++        return PORT_OPT_TAB;
 +    }
-+    if (a == N3DS_OPT_TAB) {
++    if (a == PORT_OPT_TAB) {
 +        return 0;
 +    }
 +#endif
@@ -215,10 +215,10 @@ index 3e30828a..c0e15516 100644
              loadedTab = idx;
          }
      }
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    // the options page: every tab of the game's unlit (the host lights its button): their tiles and the base palette
 +    // (a lit tab's obj%d.bpl changes palette 15, which all the tabs use)
-+    if (idx == N3DS_OPT_TAB && idx != loadedTab) {
++    if (idx == PORT_OPT_TAB && idx != loadedTab) {
 +        vramTasks[0].requestChars(commonObjChars, 8, 0x80, 0x80, 0xbf);
 +        File_LoadToBuffer("menu/tag/obj.bpl", tabPalette, 0x20);
 +        vramTasks[2].requestPalette(tabPalette, 8, 0xf);
@@ -234,7 +234,7 @@ index 4665f069..8268c560 100644
 +++ b/src/ov094/unk_ov094_02292da8.cpp
 @@ -1,4 +1,5 @@
  #include "types.h"
-+#include "n3ds_options.h"
++#include "port_options.h"
  #include "item/ItemIconCache.h"
  #include "item/ItemName.h"
  #include "menu/InventoryGridTypes.h"
@@ -242,7 +242,7 @@ index 4665f069..8268c560 100644
          OamObjTemplate *e = InventoryItemGrid_GetSlotSprite(o, k);
          s32 c = e->charName();
          u8 *q = o->iconCache.getIconChars(r);
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +        q = InventoryItemGrid_StackIcon(q, *p, InventoryItemGrid_GetIconPalette(&o->iconCache, r));
 +#endif
          Gfx2d_LoadCharRange(q, 8, c, c, c + 1);
@@ -252,9 +252,9 @@ index 4665f069..8268c560 100644
      case 0:
      default:
          itemName.setFromItem(p);
-+#ifdef N3DS_PORT
-+        if (n3ds_fruit_count(*p) > 1) {  // a fruit stack (n3ds_options.h): "apple x3"
-+            u8 n[4] = {' ', 'x', (u8)('0' + n3ds_fruit_count(*p)), 0};
++#ifdef ENHANCED_PORT
++        if (port_fruit_count(*p) > 1) {  // a fruit stack (port_options.h): "apple x3"
++            u8 n[4] = {' ', 'x', (u8)('0' + port_fruit_count(*p)), 0};
 +            itemName.append(n);
 +        }
 +#endif
@@ -265,7 +265,7 @@ index 4665f069..8268c560 100644
      s32 idx = InventoryItemGrid_GetIconIndex(s, &w, m);
      u8 *d = s->iconCache.getIconChars(idx);
      u32 c = InventoryItemGrid_GetIconPalette(&s->iconCache, idx);
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    d = InventoryItemGrid_StackIcon(d, w, c);
 +#endif
      InventoryItemGrid_UploadIcon(s, r, d, c);
@@ -279,9 +279,9 @@ index 9051efb8..7a139b7c 100644
  #include "proto/ov002/unk_ov002_02200840.h"
  #include "proto/ov090/unk_ov090_022918e0.h"
  #include "proto/ov095/unk_02292360.h"
-+#ifdef N3DS_PORT
-+#include "n3ds_ui.h"
-+extern "C" BOOL N3ds_KeyboardMoveOptKey(Keyboard *s, u32 p);  // modern/n3ds/menu_tab_bar.cpp
++#ifdef ENHANCED_PORT
++#include "port_ui.h"
++extern "C" BOOL Port_KeyboardMoveOptKey(Keyboard *s, u32 p);  // modern/port/menu_tab_bar.cpp
 +#endif
  #include "gfx/BgVramTask.h"
  
@@ -290,8 +290,8 @@ index 9051efb8..7a139b7c 100644
      if (a >= 0xcd && a <= 0xd4) {
          return TRUE;
      }
-+#ifdef N3DS_PORT
-+    if (a == N3DS_KB_OPT_KEY) {
++#ifdef ENHANCED_PORT
++    if (a == PORT_KB_OPT_KEY) {
 +        return TRUE;
 +    }
 +#endif
@@ -302,9 +302,9 @@ index 9051efb8..7a139b7c 100644
      if (a >= 0xc9 && a <= 0xe1) {
          return a + 0x3d;
      }
-+#ifdef N3DS_PORT
-+    if (a == N3DS_KB_OPT_KEY) {
-+        return N3DS_KB_OPT_CODE;
++#ifdef ENHANCED_PORT
++    if (a == PORT_KB_OPT_KEY) {
++        return PORT_KB_OPT_CODE;
 +    }
 +#endif
      return -1;
@@ -314,8 +314,8 @@ index 9051efb8..7a139b7c 100644
          return 1;
      }
      if (Keyboard_IsMenuTabKey(s, v) != 0) {
-+#ifdef N3DS_PORT
-+        s->cursorX = MenuTabBar_GetTabX(s->cursorKey == N3DS_KB_OPT_KEY ? N3DS_OPT_TAB : s->cursorKey - 0xcd);
++#ifdef ENHANCED_PORT
++        s->cursorX = MenuTabBar_GetTabX(s->cursorKey == PORT_KB_OPT_KEY ? PORT_OPT_TAB : s->cursorKey - 0xcd);
 +#else
          s->cursorX = MenuTabBar_GetTabX(s->cursorKey - 0xcd);
 +#endif
@@ -326,8 +326,8 @@ index 9051efb8..7a139b7c 100644
          }
          return TRUE;
      }
-+#ifdef N3DS_PORT
-+    if (N3ds_KeyboardMoveOptKey(s, p)) return TRUE;
++#ifdef ENHANCED_PORT
++    if (Port_KeyboardMoveOptKey(s, p)) return TRUE;
 +#endif
      if (Keyboard_IsMenuTabKey(s, s->cursorKey) != 0) {
          if (MenuKeys_HasDown(p) != 0) {
@@ -340,10 +340,10 @@ index 97232eb4..1c5d6027 100644
  #include "uptr.h"
  #include "host_shared_calls.h"
  #include "types.h"
-+#include "n3ds_options.h"
-+#ifdef N3DS_PORT
-+#include "n3ds_ui.h"
-+#define POCKET_TAB_OF(id) ((id) == POCKET_OPT_TARGET ? N3DS_OPT_TAB : (id) - 0x19)
++#include "port_options.h"
++#ifdef ENHANCED_PORT
++#include "port_ui.h"
++#define POCKET_TAB_OF(id) ((id) == POCKET_OPT_TARGET ? PORT_OPT_TAB : (id) - 0x19)
 +#else
 +#define POCKET_TAB_OF(id) ((id) - 0x19)
 +#endif
@@ -371,16 +371,16 @@ index 97232eb4..1c5d6027 100644
      }
  }
  
-+#ifdef N3DS_PORT
-+// Stacked fruit (n3ds_options.h; modern/n3ds/stacked_fruit.cpp): what stays of a dropped stack, and "Take One": one action
++#ifdef ENHANCED_PORT
++// Stacked fruit (port_options.h; modern/port/stacked_fruit.cpp): what stays of a dropped stack, and "Take One": one action
 +// more than the game's 0-0x21, 0x22 being "Never Mind"
 +extern "C" BOOL PocketMenu_KeepFruitRest(PocketMenu *s, u32 t, u32 v);
 +extern "C" void PocketMenu_TakeOneFruit(PocketMenu *s);
-+#define N3DS_ACTION_TAKE_ONE 0x23
-+// the options button in the tab row (modern/n3ds/menu_tab_bar.cpp) and stacked fruit merging (stacked_fruit.cpp): done
++#define PORT_ACTION_TAKE_ONE 0x23
++// the options button in the tab row (modern/port/menu_tab_bar.cpp) and stacked fruit merging (stacked_fruit.cpp): done
 +// if they took the turn
-+extern "C" BOOL N3ds_PocketMoveOptButton(PocketMenu *s, u32 pad);
-+extern "C" BOOL N3ds_MergeFruit(u16 *a, u16 *b);
++extern "C" BOOL Port_PocketMoveOptButton(PocketMenu *s, u32 pad);
++extern "C" BOOL Port_MergeFruit(u16 *a, u16 *b);
 +#endif
 +
  void PocketMenu::mainAct28()
@@ -388,13 +388,13 @@ index 97232eb4..1c5d6027 100644
      switch (FieldAction_PollDrop(fieldRequest)) {
      case 1:
          if (testFlags(0x1000)) {
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +            if (!PocketMenu_KeepFruitRest(this, actionTarget, PocketMenu_GetItem(this, actionTarget)))
 +#endif
              Shared_InventoryItemGrid_ClearSlot(&m_358, PocketMenu_TargetToGridIndex(this, actionTarget));
              PocketMenu_ReturnToIdle(this);
          } else {
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +            PocketMenu_KeepFruitRest(this, handSource, handItem);
 +#endif
              clearHand();
@@ -404,7 +404,7 @@ index 97232eb4..1c5d6027 100644
      if (id >= 0x19 && id <= 0x20) {
          return 1;
      }
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    if (id == POCKET_OPT_TARGET) {
 +        return 1;
 +    }
@@ -416,8 +416,8 @@ index 97232eb4..1c5d6027 100644
      if (PocketMenu_IsLetterTarget(s, id) && PocketMenu_IsSlotEmpty(s, id)) {
          return 0;
      }
-+#ifdef N3DS_PORT
-+    if (PocketMenu_IsLetterTarget(s, id) && n3ds_fruit_count(s->handItem) > 1) {  // no fruit stack into a letter
++#ifdef ENHANCED_PORT
++    if (PocketMenu_IsLetterTarget(s, id) && port_fruit_count(s->handItem) > 1) {  // no fruit stack into a letter
 +        s->returnHand(1);
 +        return 1;
 +    }
@@ -438,7 +438,7 @@ index 97232eb4..1c5d6027 100644
          return 0;
      }
      if (r == 1) {
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +        PocketMenu_KeepFruitRest(this, handSource, handItem);
 +#endif
          clearHand();
@@ -448,8 +448,8 @@ index 97232eb4..1c5d6027 100644
      if (f != 0 || g != 0) {
          return 1;
      }
-+#ifdef N3DS_PORT
-+    if (N3ds_MergeFruit(a, b)) return 0;
++#ifdef ENHANCED_PORT
++    if (Port_MergeFruit(a, b)) return 0;
 +#endif
      loc[0] = *a;
      loc[1] = *b;
@@ -458,8 +458,8 @@ index 97232eb4..1c5d6027 100644
  }
  
  s32 PocketMenu::requestDropItem(s32 a) {
-+#ifdef N3DS_PORT
-+    a = n3ds_fruit_one(a);  // of a fruit stack one fruit (the rest stays: PocketMenu_KeepFruitRest)
++#ifdef ENHANCED_PORT
++    a = port_fruit_one(a);  // of a fruit stack one fruit (the rest stays: PocketMenu_KeepFruitRest)
 +#endif
      if (Unk_ov096_0229652c_IsZero(gFieldSceneKind)) {
          fieldRequest = FieldAction_RequestDrop(gCommManager->myAid, a);
@@ -468,7 +468,7 @@ index 97232eb4..1c5d6027 100644
                  setFlags(0x1000);
              } else {
                  s32 x = PocketMenu_TargetToGridIndex(this, t);
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +                if (!PocketMenu_KeepFruitRest(this, t, r6))
 +#endif
                  Shared_InventoryItemGrid_ClearSlot(&m_358, x);
@@ -478,8 +478,8 @@ index 97232eb4..1c5d6027 100644
          PocketMenu_ReturnToIdle(this);
          return;
      }
-+#ifdef N3DS_PORT
-+    if (chosenAction == N3DS_ACTION_TAKE_ONE) {
++#ifdef ENHANCED_PORT
++    if (chosenAction == PORT_ACTION_TAKE_ONE) {
 +        PocketMenu_TakeOneFruit(this);
 +        return;
 +    }
@@ -491,11 +491,11 @@ index 97232eb4..1c5d6027 100644
          if (canDropItem(a)) {
              ChoiceIdList_Add(optionList, Unk_ov096_0229590c_IsZero(gFieldSceneKind) ? 1 : 0xa, 2);
          }
-+#ifdef N3DS_PORT
-+        if (n3ds_fruit_count(a) > 1 && PocketMenu_FindEmptyPocket(this) != 0x26) {  // (PocketMenu_TakeOneFruit)
++#ifdef ENHANCED_PORT
++        if (port_fruit_count(a) > 1 && PocketMenu_FindEmptyPocket(this) != 0x26) {  // (PocketMenu_TakeOneFruit)
 +            LabelString t;
 +            t.set((u8 *)"Take One");
-+            PocketMenu_Popup(this)->addCustomRow((PopupChoiceIdList *)optionList, &t, N3DS_ACTION_TAKE_ONE);
++            PocketMenu_Popup(this)->addCustomRow((PopupChoiceIdList *)optionList, &t, PORT_ACTION_TAKE_ONE);
 +        }
 +#endif
          if (Unk_ov096_0229590c_IsZero(gFieldSceneKind)) {
@@ -505,8 +505,8 @@ index 97232eb4..1c5d6027 100644
  }
  
  void PocketMenu::moveCursorInTabs(u32 pad, s32 mode) {
-+#ifdef N3DS_PORT
-+    if (N3ds_PocketMoveOptButton(this, pad)) return;
++#ifdef ENHANCED_PORT
++    if (Port_PocketMoveOptButton(this, pad)) return;
 +#endif
      if (MenuKeys_HasLeft(pad)) {
          if (*(volatile u8 *)&cursorTarget > 0x19) {
@@ -517,7 +517,7 @@ index b75b2604..c9af915c 100644
 +++ b/src/ov098/unk_ov098_0229b280.cpp
 @@ -1,4 +1,5 @@
  #include "types.h"
-+#include "n3ds_options.h"
++#include "port_options.h"
  #include "host_labels.h"
  #include "host_shared_calls.h"
  #include "Unk_020d8c7c.h"
@@ -525,8 +525,8 @@ index b75b2604..c9af915c 100644
          s32 pair[2];
          pair[0] = digUnitX;
          pair[1] = digUnitY;
-+#ifdef N3DS_PORT
-+        a = n3ds_fruit_one(a);  // of a fruit stack one fruit is buried (mainAct2E)
++#ifdef ENHANCED_PORT
++        a = port_fruit_one(a);  // of a fruit stack one fruit is buried (mainAct2E)
 +#endif
          fieldRequest = FieldAction_RequestTool(gCommManager->myAid, pair, 2, 0, a);
          if (fieldRequest == -1) {
@@ -535,13 +535,13 @@ index b75b2604..c9af915c 100644
      VecFx32 out;
      FieldPos_FromUnitCenter(&out, digUnitX, digUnitY);
      v = PocketMenu_GetItem(this, actionTarget);
-+#ifdef N3DS_PORT
-+    v = n3ds_fruit_one(v);  // a fruit stack (n3ds_options.h): one fruit goes into the hole, the rest stays
++#ifdef ENHANCED_PORT
++    v = port_fruit_one(v);  // a fruit stack (port_options.h): one fruit goes into the hole, the rest stays
 +#endif
      if (PlayerActor_LocalRequestBuryItem(&out, &v)) {
-+#ifdef N3DS_PORT
-+        if (n3ds_fruit_count(PocketMenu_GetItem(this, actionTarget)) > 1)
-+            PocketMenu_SetSlotItem(this, actionTarget, n3ds_fruit_rest(PocketMenu_GetItem(this, actionTarget)), 0);
++#ifdef ENHANCED_PORT
++        if (port_fruit_count(PocketMenu_GetItem(this, actionTarget)) > 1)
++            PocketMenu_SetSlotItem(this, actionTarget, port_fruit_rest(PocketMenu_GetItem(this, actionTarget)), 0);
 +        else
 +#endif
          PocketMenu_ClearSlotItem(this, actionTarget);
@@ -555,8 +555,8 @@ index bd154cc7..05be81a5 100644
  #include "proto/ov090/unk_ov090_022918e0.h"
  #include "proto/ov095/unk_02292360.h"
  #include "proto/ov111/unk_02296840.h"
-+#ifdef N3DS_PORT
-+#include "n3ds_ui.h"
++#ifdef ENHANCED_PORT
++#include "port_ui.h"
 +#endif
  
  enum Unk_ov111_022970cc_Status { UNK_OV111_ST_0 = 0, UNK_OV111_ST_1 = 1, UNK_OV111_ST_2 = 2, UNK_OV111_ST_3 = 3 };
@@ -565,9 +565,9 @@ index bd154cc7..05be81a5 100644
              ChatMenu_RequestTab(this, x - 0x10a, 0);
              r = UNK_OV111_ST_2;
              break;
-+#ifdef N3DS_PORT
-+        case N3DS_KB_OPT_CODE - 0x100:  // (the options button: N3DS_KB_OPT_KEY)
-+            ChatMenu_RequestTab(this, N3DS_OPT_TAB, 0);
++#ifdef ENHANCED_PORT
++        case PORT_KB_OPT_CODE - 0x100:  // (the options button: PORT_KB_OPT_KEY)
++            ChatMenu_RequestTab(this, PORT_OPT_TAB, 0);
 +            r = UNK_OV111_ST_2;
 +            break;
 +#endif
@@ -582,10 +582,10 @@ index af4876bb..f988355d 100644
  #include "proto/autoload_2/unk_020e8558.h"
  #include "proto/main/unk_02087e70.h"
  #include "proto/ov002/unk_ov002_022025cc.h"
-+#ifdef N3DS_PORT
-+#include "n3ds_ui.h"
++#ifdef ENHANCED_PORT
++#include "port_ui.h"
 +// the options button as a focus in the tab row, left of the pockets' tab (0-0xc are taken, 0xd on the list's entries,
-+// at most 0xd + 0x38): a tab focus whose tab is N3DS_OPT_TAB
++// at most 0xd + 0x38): a tab focus whose tab is PORT_OPT_TAB
 +#define BOOK_OPT_FOCUS 0xff
 +#endif
  
@@ -595,7 +595,7 @@ index af4876bb..f988355d 100644
  s32 CreatureBook_GetFocusX(CreatureBookPanel *s) {
      s32 r;
      if (CreatureBook_GetFocusedTab(s) != -1) {
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +        r = MenuTabBar_GetTabX(CreatureBook_GetFocusedTab(s));
 +#else
          r = MenuTabBar_GetTabX(s->focus - 5);
@@ -607,9 +607,9 @@ index af4876bb..f988355d 100644
      if (v >= 5 && v <= 0xc) {
          return v - 5;
      }
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    if (v == BOOK_OPT_FOCUS) {
-+        return N3DS_OPT_TAB;
++        return PORT_OPT_TAB;
 +    }
 +#endif
      return -1;
@@ -619,7 +619,7 @@ index af4876bb..f988355d 100644
          return FALSE;
      }
      u8 old = s->focus;
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    // the options button: Left from the pockets' tab, Right back to it, Down as from the tabs
 +    if (s->focus == BOOK_OPT_FOCUS) {
 +        if (MenuKeys_HasDown(pad)) {
@@ -642,10 +642,10 @@ index af20980f..ec983935 100644
  #include "proto/main/unk_020637e4.h"
  #include "proto/ov002/unk_ov002_022025cc.h"
  #include "player/PlayerData.h"
-+#ifdef N3DS_PORT
-+#include "n3ds_ui.h"
++#ifdef ENHANCED_PORT
++#include "port_ui.h"
 +// the options button as a hand target in the tab row, left of the pockets' tab (0x10 is the scroll knob): a tab target
-+// whose tab is N3DS_OPT_TAB
++// whose tab is PORT_OPT_TAB
 +#define MAP_OPT_TARGET 0x11
 +#endif
  
@@ -655,7 +655,7 @@ index af20980f..ec983935 100644
      if (cursorTarget >= 0xa && cursorTarget <= 0xf) {
          setListScrollTarget(listScroll & ~0xf);
      }
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    if (cursorTarget <= 7 || cursorTarget == MAP_OPT_TARGET) {
 +#else
      if (cursorTarget <= 7) {
@@ -667,9 +667,9 @@ index af20980f..ec983935 100644
      if (c <= 7) {
          return MenuTabBar_GetTabX(c);
      }
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    if (c == MAP_OPT_TARGET) {
-+        return MenuTabBar_GetTabX(N3DS_OPT_TAB);
++        return MenuTabBar_GetTabX(PORT_OPT_TAB);
 +    }
 +#endif
      if (c == 8) {
@@ -679,7 +679,7 @@ index af20980f..ec983935 100644
      if (c <= 7) {
          return 8;
      }
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    if (c == MAP_OPT_TARGET) {
 +        return 8;
 +    }
@@ -691,7 +691,7 @@ index af20980f..ec983935 100644
              if (ACV != 0) {
                  ACV = ACV - 1;
              }
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +            else {
 +                cursorTarget = MAP_OPT_TARGET;  // (from the pockets' tab onto the options button)
 +            }
@@ -703,7 +703,7 @@ index af20980f..ec983935 100644
              mapCursorY = ((MenuCursorBase *)&cursor)->getScreenY();
              return 2;
          }
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    } else if (old == MAP_OPT_TARGET) {
 +        // the options button: Right back onto the pockets' tab, Down into the map as from the pockets' tab
 +        if (MenuKeys_HasDown(pad)) {
@@ -723,9 +723,9 @@ index af20980f..ec983935 100644
              return 2;
          }
          return 0;
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    } else if (s == MAP_OPT_TARGET) {
-+        return requestTab(N3DS_OPT_TAB) ? 1 : 0;
++        return requestTab(PORT_OPT_TAB) ? 1 : 0;
 +#endif
      } else if (s <= 7) {
          if (requestTab(s)) {
@@ -738,10 +738,10 @@ index a1691c6e..77f7cbda 100644
  typedef void (FriendRosterTab::*Unk_ov119_02295840_Fn)();
  
  #define A0V (*(volatile u8 *)&focus)
-+#ifdef N3DS_PORT
-+#include "n3ds_ui.h"
++#ifdef ENHANCED_PORT
++#include "port_ui.h"
 +// the options button as a focus in the tab row, left of the pockets' tab (0x17 is "none"): a tab focus whose tab is
-+// N3DS_OPT_TAB
++// PORT_OPT_TAB
 +#define FRIEND_OPT_FOCUS 0x18
 +#define FRIEND_IS_TAB(v) (((v) >= 0xe && (v) <= 0x15) || (v) == FRIEND_OPT_FOCUS)
 +#else
@@ -763,9 +763,9 @@ index a1691c6e..77f7cbda 100644
      if (v >= 0xe && v <= 0x15) {
          return MenuTabBar_GetTabX(v - 0xe);
      }
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    if (v == FRIEND_OPT_FOCUS) {
-+        return MenuTabBar_GetTabX(N3DS_OPT_TAB);
++        return MenuTabBar_GetTabX(PORT_OPT_TAB);
 +    }
 +#endif
      if (v >= 8 && v <= 0xd) {
@@ -797,18 +797,18 @@ index a1691c6e..77f7cbda 100644
 +    } else if (FRIEND_IS_TAB(old)) {
          if (MenuKeys_HasLeft(keys)) {
              if (A0V > 0xe) {
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +                if (A0V != FRIEND_OPT_FOCUS)  // (the options button: nothing further left)
 +#endif
                  A0V = A0V - 1;
              }
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +            else {
 +                A0V = FRIEND_OPT_FOCUS;  // (from the pockets' tab onto the options button)
 +            }
 +#endif
          } else if (MenuKeys_HasRight(keys)) {
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +            if (A0V == FRIEND_OPT_FOCUS) {
 +                A0V = 0xe;  // (back onto the pockets' tab)
 +            } else
@@ -820,9 +820,9 @@ index a1691c6e..77f7cbda 100644
  BOOL FriendRosterTab::activateFocus()
  {
      u32 m = focus;
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    if (m == FRIEND_OPT_FOCUS) {
-+        return requestTab(N3DS_OPT_TAB) ? TRUE : FALSE;
++        return requestTab(PORT_OPT_TAB) ? TRUE : FALSE;
 +    }
 +#endif
      if (m >= 0xe && m <= 0x15) {
@@ -836,10 +836,10 @@ index ad1eaf51..00ea1170 100644
  #include "net/CommManager.h"
  #include "nitro/gxoam.h"
  #include "menu/MenuTabBar.h"
-+#ifdef N3DS_PORT
-+#include "n3ds_ui.h"
++#ifdef ENHANCED_PORT
++#include "port_ui.h"
 +// the options button as a hand target in the tab row, left of the pockets' tab (0x18 is "none"): a tab target whose tab
-+// is N3DS_OPT_TAB
++// is PORT_OPT_TAB
 +#define DESIGN_OPT_SLOT 0x19
 +#endif
  #include "player/PlayerData.h"
@@ -849,15 +849,15 @@ index ad1eaf51..00ea1170 100644
  
  s32 DesignTab::getSlotX(u32 i) {
      if (i >= 0x10 && i <= 0x17) return MenuTabBar_GetTabX(i - 0x10);
-+#ifdef N3DS_PORT
-+    if (i == DESIGN_OPT_SLOT) return MenuTabBar_GetTabX(N3DS_OPT_TAB);
++#ifdef ENHANCED_PORT
++    if (i == DESIGN_OPT_SLOT) return MenuTabBar_GetTabX(PORT_OPT_TAB);
 +#endif
      return sDesignTabSlotX[i];
  }
  
  u32 DesignTab::getSlotY(u32 i) {
      if (i >= 0x10 && i <= 0x17) return 8;
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    if (i == DESIGN_OPT_SLOT) return 8;
 +#endif
      return sDesignTabSlotY[i];
@@ -867,9 +867,9 @@ index ad1eaf51..00ea1170 100644
      if (t >= 0x10 && t <= 0x17) {
          return t - 0x10;
      }
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    if (t == DESIGN_OPT_SLOT) {
-+        return N3DS_OPT_TAB;
++        return PORT_OPT_TAB;
 +    }
 +#endif
      return -1;
@@ -879,7 +879,7 @@ index ad1eaf51..00ea1170 100644
              if (t > 0x10 && t <= 0x17) {
                  cursorSlot = *(volatile u8 *)&cursorSlot - 1;
              }
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +            else if (t == 0x10) {
 +                cursorSlot = DESIGN_OPT_SLOT;  // (from the pockets' tab onto the options button)
 +            }
@@ -891,7 +891,7 @@ index ad1eaf51..00ea1170 100644
              if (t >= 0x10 && t < 0x17) {
                  cursorSlot = *(volatile u8 *)&cursorSlot + 1;
              }
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +            else if (t == DESIGN_OPT_SLOT) {
 +                cursorSlot = 0x10;  // (back onto the pockets' tab)
 +            }
@@ -903,8 +903,8 @@ index ad1eaf51..00ea1170 100644
          if (!cursorRowDown(0, 3, 4)) {
              s32 t = getCursorTab();
              if (t != -1) {
-+#ifdef N3DS_PORT
-+                if (t == N3DS_OPT_TAB) t = 0;  // (down from the options button as from the pockets' tab)
++#ifdef ENHANCED_PORT
++                if (t == PORT_OPT_TAB) t = 0;  // (down from the options button as from the pockets' tab)
 +#endif
                  moveCursorFromTab(t);
              } else if (!cursorRowDown(0xc, 0xf, 0)) {

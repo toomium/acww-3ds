@@ -41,7 +41,7 @@ index d128bbf7..d132e35f 100644
                           "against the declared size, also arrays inside structs) and undefined (the rest of UBSan); "
                           "every report recovers (the run goes on), docs/host.md")
 +parser.add_argument("--plain", action="store_true",
-+                    help="--os 3ds: the comparison build for tests (a separate build: suffix _plain): N3DS_PORT not "
++                    help="--os 3ds: the comparison build for tests (a separate build: suffix _plain): ENHANCED_PORT not "
 +                         "defined, the PC port's model of the DS hardware kept; without it --os 3ds builds the port")
  parser.add_argument("--regen-gen", action="store_true",
                      help="regenerate modern/gen/gaps.c from the DS build's delinking (build/usa/delinks)")
@@ -63,7 +63,7 @@ index d128bbf7..d132e35f 100644
 +        args.suffix = "_plain"
 +elif args.plain:
 +    sys.exit("--plain: --os 3ds only")
-+PORT = N3DS and not args.plain  # the 3DS port itself (N3DS_PORT); --plain is the build it is measured against
++PORT = N3DS and not args.plain  # the 3DS port itself (ENHANCED_PORT); --plain is the build it is measured against
  if MAC:
      if args.guards or args.oracle:
          sys.exit("--os macos: no --guards or --oracle (GNU ld / melonDS builds)")
@@ -130,7 +130,7 @@ index d128bbf7..d132e35f 100644
  if args.extra_cflags:
      GAME_FLAGS += " " + args.extra_cflags
 +if PORT:
-+    GAME_FLAGS += " -DN3DS_PORT"
++    GAME_FLAGS += " -DENHANCED_PORT"
  # the sanitizer variant: the game, the runtime and the link with the same -fsanitize options; HOST_ASAN tells the
  # runtime's stack switches (coro.c) and the game's heaps (include/host_asan.h) to annotate for ASan
  SAN_FLAGS = ""
@@ -159,8 +159,8 @@ index d128bbf7..d132e35f 100644
 +    LINK_FLAGS = f"{M_FLAG} -specs=3dsx.specs -L{DKP}/libctru/lib -Wl,--no-enum-size-warning,--no-wchar-size-warning"
 +    HOST_CXX_FLAGS = f"{M_FLAG} -O1 -g -std=c++17 -DHOST"
 +    if PORT:
-+        HOST_FLAGS += " -DN3DS_PORT"
-+        HOST_CXX_FLAGS += " -DN3DS_PORT"
++        HOST_FLAGS += " -DENHANCED_PORT"
++        HOST_CXX_FLAGS += " -DENHANCED_PORT"
 +    MELON_LIBS = ""
  elif A64:
      # the cross toolchain's glibc; melonDS's core cross-built for aarch64 (build-core-a64: without the JIT and the GDB
@@ -227,7 +227,7 @@ index d128bbf7..d132e35f 100644
              objs.append(o)
 +        # the enhanced port's game-side code, moved out of the game's files (the game's flags)
 +        if PORT:
-+            for s in sources(Path("modern/n3ds"), (".c", ".cpp")):
++            for s in sources(Path("modern/port"), (".c", ".cpp")):
 +                o = str(build / s.with_suffix(".o"))
 +                n.build(o, "cxx" if s.suffix == ".cpp" else "cc", str(s))
 +                objs.append(o)

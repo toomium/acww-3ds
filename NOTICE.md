@@ -4,7 +4,7 @@
 
 Only the original code, tools and documentation written for this project are
 covered by this project's license, the GNU General Public License v3.0 (see
-[`LICENSE`](LICENSE)): the files in `3ds_port/`, `tools/` and `web/`, the
+[`LICENSE`](LICENSE)): the files in `ports/`, `tools/` and `web/`, the
 documentation, and the changes the patches in `patches/` make.
 
 ## What it does not
@@ -20,9 +20,9 @@ documentation, and the changes the patches in `patches/` make.
 
 ## Adapted from other projects
 
-`cia/acww.rsf` and `tools/build_cia_tools.sh` are adapted from
+`ports/3ds/cia/acww.rsf` and `tools/build_cia_tools.sh` are adapted from
 [GabeSud0/pokeplatinum-3ds](https://github.com/GabeSud0/pokeplatinum-3ds)
-(GPL-3.0), whose forwarder is also the model for `cia/forwarder.c`.
+(GPL-3.0), whose forwarder is also the model for `ports/3ds/cia/forwarder.c`.
 
 ## Rules for contributors
 

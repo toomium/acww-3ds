@@ -69,18 +69,63 @@ jobs:
         timeout-minutes: 10
         run: make cia
 
-      # A release's files: the program, the .cia and their checksums. Kept for the release job only on a version tag.
+      # A release's 3DS files: the program and the .cia. Kept for the release job only on a version tag.
       - name: The release's files
         shell: bash
         run: |
           mkdir -p dist/release
           cp build/upstream/build/host3ds_usa/acww.3dsx build/cia/acww.cia dist/release/
-          (cd dist/release && sha256sum acww.3dsx acww.cia > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          (cd dist/release && sha256sum acww.3dsx acww.cia)
       - name: Upload the release's files (version tags only)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v4
         with:
-          name: release
+          name: release-3ds
+          path: dist/release/
+
+  # The Switch: devkitPro's devkitA64 with libnx, SDL2 and Mesa (EGL, OpenGL ES).
+  build-switch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container: devkitpro/devkita64:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Python, Git, ninja, a PC C compiler and the Switch's libraries
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends python3 git ca-certificates ninja-build make gcc g++ libc6-dev
+          dkp-pacman -Sy --noconfirm --needed switch-sdl2 switch-mesa
+      - name: Fetch the decompilation (fresh; check the patches)
+        run: python3 tools/bootstrap.py --clean
+      - name: The port's version
+        shell: bash
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then v="$GITHUB_REF_NAME"; else v="dev-${HEAD_SHA::7}"; fi
+          echo "PORT_VERSION=$v" >> "$GITHUB_ENV"
+          echo "The port's version: $v"
+      - name: Build the port
+        shell: bash
+        run: |
+          set -o pipefail
+          make switch 2>&1 | tee build-switch.log || {
+            grep -iE "error|undefined reference|\*\*\*" build-switch.log | head -20 | sed 's/^/::error::/' || true
+            tail -15 build-switch.log | sed 's/^/::error title=Last lines::/' || true
+            exit 1
+          }
+      # A release's Switch file: the program. Kept for the release job only on a version tag.
+      - name: The release's files
+        shell: bash
+        run: |
+          mkdir -p dist/release
+          cp build/upstream/build/hostswitch_usa/acww.nro dist/release/
+          (cd dist/release && sha256sum acww.nro)
+      - name: Upload the release's files (version tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-switch
           path: dist/release/
 
   build-pc:
@@ -98,10 +143,10 @@ jobs:
         timeout-minutes: 2
         run: python3 tools/boot_smoke.py build/upstream/build/host64_usa/acww
 
-  # A version tag: once every build and test passed, its release, with the file build-3ds made.
+  # A version tag: once every build and test passed, its release, with the files build-3ds and build-switch made.
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [tools, build-3ds, build-pc]
+    needs: [tools, build-3ds, build-switch, build-pc]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -114,8 +159,11 @@ jobs:
           sparse-checkout: docs/releases
       - uses: actions/download-artifact@v4
         with:
-          name: release
+          pattern: release-*
+          merge-multiple: true
           path: dist/release
+      - name: The checksums
+        run: cd dist/release && sha256sum acww.3dsx acww.cia acww.nro > SHA256SUMS.txt && cat SHA256SUMS.txt
       # The notes: docs/releases/<tag>.md if there is one, else GitHub's list of the merged pull requests.
       - name: Publish the release
         env:
@@ -131,16 +179,17 @@ jobs:
             GENERATE="--generate-notes"
           fi
           cat >> notes.md <<'NOTES'
-          You need your own dump of Animal Crossing: Wild World (USA, Rev 1). The web builder puts it and this program together for the SD card, in your browser.
+          You need your own dump of Animal Crossing: Wild World (USA, Rev 1). The web builder puts it and the program for your console together for the SD card, in your browser.
 
-          - `acww.3dsx`: the program, for the Homebrew Launcher (`sd:/3ds/acww/`, beside `game.pak`, the data pack the web builder makes from your ROM).
-          - `acww.cia`: optional, the HOME Menu version (install it with FBI): it opens `acww.3dsx` from the SD card, so it needs the files above.
+          - `acww.3dsx`: the 3DS's program, for the Homebrew Launcher (`sd:/3ds/acww/`, beside `game.pak`, the data pack the web builder makes from your ROM).
+          - `acww.cia`: 3DS, optional, the HOME Menu version (install it with FBI): it opens `acww.3dsx` from the SD card, so it needs the files above.
+          - `acww.nro`: the Switch's program, for the Homebrew Menu (`sd:/switch/acww/`, beside `game.pak`).
           - `SHA256SUMS.txt`: the checksums.
           NOTES
           PRERELEASE=""
           case "$GITHUB_REF_NAME" in *-*) PRERELEASE="--prerelease" ;; esac
           gh release create "$GITHUB_REF_NAME" dist/release/* --repo "$GITHUB_REPOSITORY" \
-              --verify-tag --title "Animal Crossing: Wild World 3DS $GITHUB_REF_NAME" \
+              --verify-tag --title "acww-port $GITHUB_REF_NAME" \
               --notes-file notes.md $GENERATE $PRERELEASE
       # The website with this release's file (pages.yml). A release made with this workflow's token doesn't start
       # other workflows by itself; asking for a run does.

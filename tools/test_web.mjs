@@ -8,7 +8,7 @@ import { crc32, zipParts } from "../web/js/zip.mjs";
 import { createHash } from "node:crypto";
 import { ciaWithIcon, smdhIcons } from "../web/js/cia.mjs";
 import { makePak } from "../web/js/pak.mjs";
-import { checkRom, gameCode, sdFiles, sha1Hex } from "../web/js/rom.mjs";
+import { checkRom, gameCode, programConsole, sdFiles, sha1Hex } from "../web/js/rom.mjs";
 
 const enc = new TextEncoder();
 
@@ -31,6 +31,16 @@ const files = sdFiles({ program: enc.encode("program"), pak: fake });
 assert.deepEqual(files.map((f) => f.name), ["3ds/acww/acww.3dsx", "3ds/acww/game.pak"]);
 assert.deepEqual(sdFiles({ program: fake, pak: fake, cia: fake }).map((f) => f.name),
   ["3ds/acww/acww.3dsx", "3ds/acww/game.pak", "cias/acww.cia"]);
+// the Switch: its folder, no .cia even when one is given
+assert.deepEqual(sdFiles({ console: "switch", program: fake, pak: fake, cia: fake }).map((f) => f.name),
+  ["switch/acww/acww.nro", "switch/acww/game.pak"]);
+// a program's console from its header
+const nro = new Uint8Array(0x20);
+nro.set(enc.encode("NRO0"), 0x10);
+assert.equal(programConsole(nro), "switch");
+assert.equal(programConsole(enc.encode("3DSX and the rest")), "3ds");
+assert.equal(programConsole(fake), "");
+assert.equal(programConsole(new Uint8Array(3)), "");
 
 // the archive is one other tools read: Python's zipfile checks every CRC and gives the bytes back
 const zip = Buffer.concat(zipParts(files).map((p) => Buffer.from(p)));

@@ -1,0 +1,126 @@
+From: acww-3ds <noreply@invalid>
+Subject: [PATCH] 64-bit: the villager talk topics' view of VillagerTalk at VillagerTalk's own offsets (the crash greeting a villager)
+
+VillagerTalkRequestItemTopics, the root of the topic classes (ov069's chain up to VillagerTalkTopics), is a view of
+the VillagerTalk object with the DS's offsets as padding arrays. On a 64-bit build pointers and member pointers grow:
+VillagerTalk::begin wrote actor at 0x188 and VillagerTalkTopics::selectGreeting read it at 0x128, NULL there - a
+data abort as soon as a villager was spoken to (the Switch; the x86-64 build reads the same wrong offset).
+- The view's gaps: the DS's on 32-bit builds, VillagerTalk's own (offsetof) on HOST64.
+- VillagerTalk's unk_158 / unk_15c / unk_160 pointer-sized (uptr): the view keeps pointers there (deliveryRecipient,
+  errandSlot, planErrand); VillagerTalk itself only clears them.
+- static_asserts: every field both have at the same offset, on every build.
+The 3DS build byte-identical.
+---
+ include/talk/VillagerTalk.h                  |  7 +--
+ include/talk/VillagerTalkRequestItemTopics.h | 50 ++++++++++++++++++--
+ 2 files changed, 49 insertions(+), 8 deletions(-)
+
+diff --git a/include/talk/VillagerTalk.h b/include/talk/VillagerTalk.h
+index 7e95f8a..5ca8200 100644
+--- a/include/talk/VillagerTalk.h
++++ b/include/talk/VillagerTalk.h
+@@ -118,9 +118,10 @@ public:
+     /* 0x154 */ u8 unk_154;
+     /* 0x155 */ u8 unk_155;
+     /* 0x156 */ u16 unk_156;
+-    /* 0x158 */ u32 unk_158;
+-    /* 0x15c */ u32 unk_15c;
+-    /* 0x160 */ u32 unk_160;
++    // (pointer-sized: the topics' view keeps pointers here, VillagerTalkRequestItemTopics.h)
++    /* 0x158 */ uptr unk_158;
++    /* 0x15c */ uptr unk_15c;
++    /* 0x160 */ uptr unk_160;
+     /* 0x164 */ u32 unk_164;
+     /* 0x168 */ union { Unk_020d8938_Fn unk_168; Unk_020d8938_FnS unk_168_s; };
+     /* 0x170 */ union { Unk_020d8938_Fn unk_170; Unk_020d8938_FnS unk_170_s; };
+diff --git a/include/talk/VillagerTalkRequestItemTopics.h b/include/talk/VillagerTalkRequestItemTopics.h
+index 5b8817d..b5b5c5d 100644
+--- a/include/talk/VillagerTalkRequestItemTopics.h
++++ b/include/talk/VillagerTalkRequestItemTopics.h
+@@ -2,6 +2,7 @@
+ #define TALK_VILLAGERTALKREQUESTITEMTOPICS_H
+ 
+ #include "types.h"
++#include "talk/VillagerTalk.h"
+ 
+ struct TalkTopicMsg;
+ struct PlanErrand;
+@@ -17,6 +18,16 @@ typedef void (VillagerTalkRequestItemTopics::*Unk_020238b0_OutFn)(TalkTopicMsg *
+ // root of the ov069 topic chain (... <- Hobby <- Holiday <- RequestReply <- Topics). All of them are views of the
+ // VillagerTalk object (0x1a0 bytes, talk/VillagerTalk.h) with member pointers of this class; the fields are the union
+ // of what the topic functions use. Members defined in src/main/unk_0201c050.cpp.
++// The gaps between the fields: the DS's offsets; a 64-bit build's from VillagerTalk itself (pointers and member pointers
++// grow there, and the DS offsets put actor where VillagerTalk::begin doesn't write it: the crash talking to a villager)
++#ifdef HOST64
++#define VT_VIEW_GAP(ds, host) (host)
++#else
++#define VT_VIEW_GAP(ds, host) (ds)
++#endif
++#define VT_OFF(m) __builtin_offsetof(VillagerTalk, m)
++#pragma GCC diagnostic push
++#pragma GCC diagnostic ignored "-Winvalid-offsetof"
+ class VillagerTalkRequestItemTopics {
+ public:
+     void openArbeitItemPicker();
+@@ -32,13 +43,13 @@ public:
+     void pickRequestReward();
+     void gotoQItemB();
+ 
+-    /* 0x000 */ u8 pad_00[0x3c];
++    /* 0x000 */ u8 pad_00[VT_VIEW_GAP(0x3c, VT_OFF(window))];
+     /* 0x03c */ void *window;
+-    /* 0x040 */ u8 pad_40[0xac - 0x40];
++    /* 0x040 */ u8 pad_40[VT_VIEW_GAP(0xac - 0x40, VT_OFF(selectFn) - VT_OFF(window) - sizeof(void *))];
+     /* 0x0ac */ Unk_020238b0_OutFn selectFn;
+-    /* 0x0b4 */ u8 pad_b4[0xc4 - 0xb4];
++    /* 0x0b4 */ u8 pad_b4[VT_VIEW_GAP(0xc4 - 0xb4, VT_OFF(unk_c4) - VT_OFF(unk_b4))];
+     /* 0x0c4 */ Unk_020238b0_Fn onEndFn;
+-    /* 0x0cc */ u8 pad_cc[0xec - 0xcc];
++    /* 0x0cc */ u8 pad_cc[VT_VIEW_GAP(0xec - 0xcc, VT_OFF(updateFn) - VT_OFF(unk_cc))];
+     /* 0x0ec */ Unk_020238b0_Fn updateFn;
+     /* 0x0f4 */ Unk_020238b0_Fn closeFn;
+     /* 0x0fc */ VillagerActor *actor;
+@@ -55,7 +66,7 @@ public:
+     /* 0x138 */ u8 noMemoryUpdate;
+     /* 0x139 */ u8 pad_139[3];
+     /* 0x13c */ void *choiceValues[5];
+-    /* 0x150 */ u8 pad_150[0x154 - 0x150];
++    /* 0x150 */ u8 pad_150[VT_VIEW_GAP(0x154 - 0x150, VT_OFF(unk_154) - VT_OFF(errandRecord))];
+     /* 0x154 */ u8 deliveryMinutes;
+     /* 0x155 */ u8 deliveryTimeIndex;
+     /* 0x156 */ u16 pendingSe;
+@@ -76,5 +87,34 @@ public:
+     /* 0x19b */ u8 pad_19b;
+     /* 0x19c */ union { s32 price; u32 unk_19c_w; };
+ };
++// (every field the view shares with VillagerTalk where VillagerTalk has it)
++#define VT_VIEW_SAME(v, m) static_assert(__builtin_offsetof(VillagerTalkRequestItemTopics, v) == VT_OFF(m), "VillagerTalk view: " #v)
++VT_VIEW_SAME(window, window);
++VT_VIEW_SAME(selectFn, selectFn);
++VT_VIEW_SAME(onEndFn, unk_c4);
++VT_VIEW_SAME(updateFn, updateFn);
++VT_VIEW_SAME(closeFn, closeFn);
++VT_VIEW_SAME(actor, actor);
++VT_VIEW_SAME(itemFromPlayer, itemFromPlayer);
++VT_VIEW_SAME(memoryIndex, memoryIndex);
++VT_VIEW_SAME(memory, unk_128);
++VT_VIEW_SAME(partnerMemoryIndex, partnerMemoryIndex);
++VT_VIEW_SAME(partnerMemory, unk_130);
++VT_VIEW_SAME(unk_134, unk_134);
++VT_VIEW_SAME(noMemoryUpdate, unk_138);
++VT_VIEW_SAME(choiceValues, choiceValues);
++VT_VIEW_SAME(deliveryMinutes, unk_154);
++VT_VIEW_SAME(pendingSe, unk_156);
++VT_VIEW_SAME(deliveryRecipient, unk_158);
++VT_VIEW_SAME(errandSlot, unk_15c);
++VT_VIEW_SAME(planErrand, unk_160);
++VT_VIEW_SAME(customFn0, unk_168);
++VT_VIEW_SAME(customFn4, unk_188);
++VT_VIEW_SAME(partnerMask, pad_190);
++VT_VIEW_SAME(itemToPlayer, itemToPlayer);
++VT_VIEW_SAME(price, unk_19c);
++static_assert(sizeof(VillagerTalkRequestItemTopics) <= sizeof(VillagerTalk), "VillagerTalk view: size");
++#undef VT_VIEW_SAME
++#pragma GCC diagnostic pop
+ 
+ #endif // TALK_VILLAGERTALKREQUESTITEMTOPICS_H

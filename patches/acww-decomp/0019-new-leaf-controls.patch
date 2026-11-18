@@ -1,7 +1,7 @@
 From: acww-3ds <noreply@invalid>
 Subject: [PATCH] Player and menus: "New Leaf controls" (option ACWW_NL_CONTROLS)
 
-The 3DS port's option "New Leaf controls" (options_3ds.c, n3ds_options.h): Y picks up items and pulls weeds (B on
+The 3DS port's option "New Leaf controls" (options_cfg.c, port_options.h): Y picks up items and pulls weeds (B on
 the DS), so B only runs; X opens the pockets (Y on the DS) and closes them again, also from the pocket menu's tab
 (PocketMenu::handleTabSwitch, where X switched to the map); the map has no key then. Off, the keys are the DS's.
 ---
@@ -20,8 +20,8 @@ index f4550db..c518a99 100644
  // The 14 functions of the translation unit 0x02004558-0x0201106c that only mwcc 1.2/base compiles
  // to the original code (see unk_02004558.cpp; same declarations, nothing else is defined here).
  #include "types.h"
-+#ifdef N3DS_PORT
-+#include "n3ds_options.h"
++#ifdef ENHANCED_PORT
++#include "port_options.h"
 +#endif
  #ifdef HOST
  #include "host_input.h"
@@ -30,9 +30,9 @@ index f4550db..c518a99 100644
                  v10 = 1;
              } else {
                  v10 = 0;
-+#ifdef N3DS_PORT
-+                // B on the DS, Y with "New Leaf controls" (n3ds_options.h): picking up, pulling weeds
-+                if (gPad.trig & n3ds_key_pick_up()) {
++#ifdef ENHANCED_PORT
++                // B on the DS, Y with "New Leaf controls" (port_options.h): picking up, pulling weeds
++                if (gPad.trig & port_key_pick_up()) {
 +#else
                  if (gPad.trig & 2) {
 +#endif
@@ -46,8 +46,8 @@ index 732fade..af24c8c 100644
 @@ -1,5 +1,8 @@
  #include "uptr.h"
  #include "types.h"
-+#ifdef N3DS_PORT
-+#include "n3ds_options.h"
++#ifdef ENHANCED_PORT
++#include "port_options.h"
 +#endif
  #include "menu/MenuProc.h"
  #include "sys/ListNode.h"
@@ -56,9 +56,9 @@ index 732fade..af24c8c 100644
              MenuCtrl_SetButtons();
              return TRUE;
          }
-+#ifdef N3DS_PORT
-+        // the pockets: Y on the DS, X with "New Leaf controls" (n3ds_options.h), which leaves the map without a key
-+        if (k & n3ds_key_pockets()) {
++#ifdef ENHANCED_PORT
++        // the pockets: Y on the DS, X with "New Leaf controls" (port_options.h), which leaves the map without a key
++        if (k & port_key_pockets()) {
 +#else
          if (k & 0x800) {
 +#endif
@@ -67,8 +67,8 @@ index 732fade..af24c8c 100644
              MenuCtrl_SetButtons();
              return TRUE;
          }
-+#ifdef N3DS_PORT
-+        if (!n3ds_new_leaf_controls() && Hud_GetSceneHudKind() != 2 && (gPad[1] & 0x400)) {
++#ifdef ENHANCED_PORT
++        if (!port_new_leaf_controls() && Hud_GetSceneHudKind() != 2 && (gPad[1] & 0x400)) {
 +#else
          if (Hud_GetSceneHudKind() != 2 && (gPad[1] & 0x400)) {
 +#endif
@@ -83,12 +83,12 @@ index 1c5d602..0d424b2 100644
          t = MenuTabBar_HitTestTouch();
      } else {
          u16 v = gPad[1];
-+#ifdef N3DS_PORT
-+        // the key that opened the pockets closes them: Y on the DS, X with "New Leaf controls" (n3ds_options.h),
++#ifdef ENHANCED_PORT
++        // the key that opened the pockets closes them: Y on the DS, X with "New Leaf controls" (port_options.h),
 +        // where the map has no key (X on the DS)
-+        if (v & n3ds_key_pockets()) {
++        if (v & port_key_pockets()) {
 +            t = 7;
-+        } else if (!n3ds_new_leaf_controls() && (v & 0x400)) {
++        } else if (!port_new_leaf_controls() && (v & 0x400)) {
 +#else
          if (v & 0x800) {
              t = 7;
@@ -104,8 +104,8 @@ index 835def6..2f46321 100644
 @@ -1,5 +1,8 @@
  // ov099: scene overlay (class PocketMenuUnk, vtable 0x02296b00, 0x2794 bytes).
  #include "types.h"
-+#ifdef N3DS_PORT
-+#include "n3ds_options.h"
++#ifdef ENHANCED_PORT
++#include "port_options.h"
 +#endif
  #include "host_shared_calls.h"
  #include "Unk_020d8c7c.h"
@@ -114,8 +114,8 @@ index 835def6..2f46321 100644
              }
          }
      } else {
-+#ifdef N3DS_PORT
-+        if ((gPad[1] & n3ds_key_pockets()) != 0) {  // (the key that opened the pockets, n3ds_options.h)
++#ifdef ENHANCED_PORT
++        if ((gPad[1] & port_key_pockets()) != 0) {  // (the key that opened the pockets, port_options.h)
 +#else
          if ((gPad[1] & 0x800) != 0) {
 +#endif
@@ -129,8 +129,8 @@ index 662180c..2535aa7 100644
 @@ -1,5 +1,8 @@
  // ov103: scene overlay (class PocketLettersMenu, vtable 0x02296da0, 0x2b04 bytes). Linked unit.
  #include "types.h"
-+#ifdef N3DS_PORT
-+#include "n3ds_options.h"
++#ifdef ENHANCED_PORT
++#include "port_options.h"
 +#endif
  #include "host_shared_calls.h"
  #include "Unk_020d8c7c.h"
@@ -139,8 +139,8 @@ index 662180c..2535aa7 100644
              }
          }
      } else {
-+#ifdef N3DS_PORT
-+        if ((gPad[1] & n3ds_key_pockets()) != 0) {  // (the key that opened the pockets, n3ds_options.h)
++#ifdef ENHANCED_PORT
++        if ((gPad[1] & port_key_pockets()) != 0) {  // (the key that opened the pockets, port_options.h)
 +#else
          if ((gPad[1] & 0x800) != 0) {
 +#endif

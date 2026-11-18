@@ -19,7 +19,7 @@ index 5c3963d9..cb49dc1e 100644
  #include "frontend.h"
  #include "host.h"
  #include "host_mem.h"
-+#include "options_3ds.h"
++#include "options_cfg.h"
  
  static AcwwShm *sShm;
  
@@ -75,7 +75,7 @@ index 5c3963d9..cb49dc1e 100644
  
  // at each VBlank: publish the frame, take the input
  void frontend_frame(void) {
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    opt_frame();
 +#endif
      u16 keyinput = 0x3ff;  // KEYINPUT: released bits are 1
@@ -103,7 +103,7 @@ index 5c3963d9..cb49dc1e 100644
      u32 sk = scripted_keys();
      keyinput &= (u16)~(sk & 0x3ff);
      xy &= (u16)~(sk & 0x0c00);
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    {
 +        u32 p = (~keyinput & 0x3ff) | (~xy & 0x0c00), hidden = p & ~opt_keys(p);
 +        keyinput |= (u16)(hidden & 0x3ff);

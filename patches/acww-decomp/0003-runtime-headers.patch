@@ -12,7 +12,7 @@ index f37276ad..9bb4ea80 100644
  #define HW_OAM (gHostOam)    // 0x07000000: OAM A, +0x400 OAM B
  
  void *HostVram_CpuPtr(unsigned int dsaddr);
-+// the enhanced 3DS port (N3DS_PORT): an LCDC address of banks A-I in the bank's own memory,
++// the enhanced 3DS port (ENHANCED_PORT): an LCDC address of banks A-I in the bank's own memory,
 +// for the SDK's texture uploads of len bytes, which then leave the banks where they are (vram.c)
 +void *host_vram_lcdc_direct(unsigned int dsaddr, unsigned int len);
  

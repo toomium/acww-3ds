@@ -26,7 +26,7 @@ index 3ea7141..90a8c18 100644
      fprintf(stderr, "card: the ROM image %s\n", sImage ? "held in memory" : "through a 1 MB cache");
      for (u32 i = 0; i < sizeof sHeader; i++) sHeader[i] = rom_byte(i);
 +    pak_header(sHeader);  // (card_pak.h: a data pack's header for the game)
- #ifdef N3DS_PORT
+ #ifdef ENHANCED_PORT
      if (sImage && !host_plat_thread_start(preload, 0)) fprintf(stderr, "card: no thread to read the image ahead\n");
  #endif
 diff --git a/modern/host/pxi7.c b/modern/host/pxi7.c

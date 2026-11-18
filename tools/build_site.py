@@ -8,7 +8,8 @@ Usage:
 --release-dir is a folder holding a release's acww.3dsx (the Pages workflow downloads it with `gh`). The
 site then carries it as release/acww.3dsx, with release/release.json (the tag, the size, the SHA-256),
 and the page offers it. A release's acww.cia (the HOME Menu version, no game code), if it is in the folder,
-goes along as release/acww.cia, and release.json says so ("cia": true). Without it the page asks the visitor for their own build.
+goes along as release/acww.cia, and release.json says so ("cia": true); the same for the Switch's program,
+acww.nro ("nro": true). Without them the page asks the visitor for their own build.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PROGRAM = "acww.3dsx"
 CIA = "acww.cia"
+NRO = "acww.nro"
 
 
 def build(out: Path, release_dir: Path | None, tag: str) -> None:
@@ -38,9 +40,11 @@ def build(out: Path, release_dir: Path | None, tag: str) -> None:
     (out / "release").mkdir()
     (out / "release" / PROGRAM).write_bytes(data)
     info = {"tag": tag, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
-    if (release_dir / CIA).is_file():  # (a release from before the .cia has none)
-        shutil.copy(release_dir / CIA, out / "release" / CIA)
-        info["cia"] = True
+    # (a release from before the .cia, or the Switch, has none)
+    for name, key in ((CIA, "cia"), (NRO, "nro")):
+        if (release_dir / name).is_file():
+            shutil.copy(release_dir / name, out / "release" / name)
+            info[key] = True
     (out / "release" / "release.json").write_text(json.dumps(info) + "\n", encoding="utf-8")
 
 
