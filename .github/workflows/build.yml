@@ -90,11 +90,12 @@ jobs:
     container: devkitpro/devkita64:latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Python, Git, ninja, a PC C compiler and the Switch's libraries
+      # The image has the Switch's libraries already (switch-portlibs: SDL2, Mesa); pkg.devkitpro.org can refuse CI
+      # (403), so nothing is fetched from it.
+      - name: Install Python, Git, ninja and a PC C compiler
         run: |
           apt-get update
           apt-get install -y --no-install-recommends python3 git ca-certificates ninja-build make gcc g++ libc6-dev
-          dkp-pacman -Sy --noconfirm --needed switch-sdl2 switch-mesa
       - name: Fetch the decompilation (fresh; check the patches)
         run: python3 tools/bootstrap.py --clean
       - name: The port's version
