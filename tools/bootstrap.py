@@ -8,9 +8,10 @@ Usage:
 
 Result:
     build/upstream/     7ucina/acww-decomp at the commit in upstream.lock, with patches/acww-decomp/*.patch
-                        applied and every file of 3ds_port/ linked in (symlink) at its path.
+                        applied and every file of each ports/<port>/overlay/ (common, 3ds, ...) linked in
+                        (symlink) at its path. All ports' files are linked at once: configure_host.py --os picks.
 
-Run it again without --clean to refresh the links after adding a file to 3ds_port/.
+Run it again without --clean to refresh the links after adding a file to an overlay.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ ROOT = Path(__file__).resolve().parent.parent
 LOCK_FILE = ROOT / "upstream.lock"
 UPSTREAM_DIR = ROOT / "build" / "upstream"
 PATCH_DIR = ROOT / "patches" / "acww-decomp"
-PORT_DIR = ROOT / "3ds_port"
+PORTS_DIR = ROOT / "ports"
 
 # Written into build/upstream/.git once the patches are applied: tells a second run that they are.
 DONE_MARK = "acww3ds-bootstrapped"
@@ -82,28 +83,40 @@ def apply_patches(dest: Path, patch_dir: Path) -> None:
             sys.exit(f"Patch {patch.name} does not apply:\n{result.stderr.strip()}")
 
 
-def port_files(port_dir: Path) -> list[Path]:
-    """The files of 3ds_port/, as paths relative to it."""
-    return sorted(p.relative_to(port_dir) for p in port_dir.rglob("*") if p.is_file() and "__pycache__" not in p.parts)
+def port_files(ports_dir: Path) -> dict[Path, Path]:
+    """The files of every ports/<port>/overlay/: their path in the source tree -> the file. Two overlays holding the
+    same path are refused: every port's files are linked into the one tree."""
+    files: dict[Path, Path] = {}
+    for overlay in sorted(ports_dir.glob("*/overlay")):
+        for p in sorted(overlay.rglob("*")):
+            if not p.is_file() or "__pycache__" in p.parts:
+                continue
+            rel = p.relative_to(overlay)
+            if rel in files:
+                sys.exit(f"{rel} is in two overlays: {files[rel].relative_to(ports_dir)} and {p.relative_to(ports_dir)}.")
+            files[rel] = p
+    return dict(sorted(files.items()))
 
 
-def link_port(dest: Path, port_dir: Path) -> int:
-    """Symlink every file of port_dir into dest at its path; drop links to files that are gone."""
+def link_port(dest: Path, ports_dir: Path) -> int:
+    """Symlink every overlay file into dest at its path; drop links into this repository to files that are gone
+    (also those of an older layout, such as 3ds_port/)."""
+    repo, tree = ports_dir.parent.resolve(), dest.resolve()
     for link in dest.rglob("*"):
         if ".git" in link.relative_to(dest).parts or not link.is_symlink():
             continue
         target = Path(os.path.realpath(link))
-        if port_dir.resolve() in target.parents and not target.exists():
+        if repo in target.parents and tree not in target.parents and not target.exists():
             link.unlink()
-    files = port_files(port_dir)
-    for rel in files:
+    files = port_files(ports_dir)
+    for rel, src in files.items():
         link = dest / rel
         link.parent.mkdir(parents=True, exist_ok=True)
         if link.is_symlink():
             link.unlink()
         elif link.exists():
-            sys.exit(f"{rel} exists in the decompilation; 3ds_port/ must hold only files that do not.")
-        link.symlink_to(os.path.relpath(port_dir / rel, link.parent))
+            sys.exit(f"{rel} exists in the decompilation; an overlay must hold only files that do not.")
+        link.symlink_to(os.path.relpath(src, link.parent))
     # Keep the links out of `git status` and `git add -A` inside build/upstream.
     exclude = dest / ".git" / "info" / "exclude"
     exclude.parent.mkdir(exist_ok=True)
@@ -141,7 +154,7 @@ def main() -> None:
             sys.exit("build/upstream is incomplete (an earlier run stopped half way).\nRun with --clean to start over.")
         print(f"build/upstream: already at {commit[:12]} with the patches applied; refreshing the links only")
 
-    print(f"Linked {link_port(UPSTREAM_DIR, PORT_DIR)} files of 3ds_port/")
+    print(f"Linked {link_port(UPSTREAM_DIR, PORTS_DIR)} files of ports/*/overlay/")
     print("Done: build/upstream")
 
 

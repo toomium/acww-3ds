@@ -12,7 +12,7 @@ index 5f86fccc..64fc3c93 100644
  #include <string.h>
  
  #include "snd7.h"
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +#include "../plat.h"
 +#endif
  
@@ -22,7 +22,7 @@ index 5f86fccc..64fc3c93 100644
  static u64 sNextTick = SND_START_DELAY;  // SND_StartIntervalTimer at the ARM7's start
  static int sTimerStopped;
  
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +// The enhanced port: the driver on a thread of its own (snd7_thread), clocked by the sound
 +// it mixes for the DSP, as the DS's ARM7 runs beside the ARM9: the music goes on while the game's thread is held up
 +// (a load, a slow frame). The game's thread hands over the command lists (snd7_receive) and passes the alarms'
@@ -49,7 +49,7 @@ index 5f86fccc..64fc3c93 100644
      }
  }
  
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +#include "driver_lock.h"
 +#else
 +static void send_to_arm9(u32 word) { pxi7_send(word); }
@@ -77,14 +77,14 @@ index 5f86fccc..64fc3c93 100644
      spu_soundcnt = 0x8000 | 0x7f;  // SND_Enable, SND_SetOutputSelector(0, 0, 0, 0), SND_SetMasterVolume(0x7f)
  }
  
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +#include "driver_thread.h"
 +#endif
 +
  // PXI tag 7 from the ARM9: a command list, or NULL = process now
  void snd7_receive(struct SNDCommand *list) {
      if (!sInit) snd7_init();
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    if (list) {
 +        lock();
 +        if (sInboxCount < 64) sInbox[sInboxCount++] = list;
@@ -109,7 +109,7 @@ index 5f86fccc..64fc3c93 100644
  }
  
  u64 snd7_next_due(void) {
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    return ~0ull;  // (the thread's own clock)
 +#endif
      u64 d = sTimerStopped ? ~0ull : sNextTick;
@@ -119,7 +119,7 @@ index 5f86fccc..64fc3c93 100644
  
  // from the host's event loop: the periodic passes and alarms due by now, and the audio up to now
  void snd7_run(u64 now) {
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    (void)now;
 +    u32 out[64];
 +    lock();
@@ -142,7 +142,7 @@ index 1a7dea5d..905a24cd 100644
  }
  
  void spu_mix_until(u64 cycles) {
-+#ifndef N3DS_PORT  // (the enhanced port mixes on a thread of its own: the game's thread's profile mark isn't its)
++#ifndef ENHANCED_PORT  // (the enhanced port mixes on a thread of its own: the game's thread's profile mark isn't its)
 +    HOST_PROF(PROF_SOUND);
 +#endif
      s16 buf[512 * 2];

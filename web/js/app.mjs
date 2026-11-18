@@ -1,11 +1,13 @@
-// The page: the ROM checked, the program fetched from this site (or chosen), the settings, the ZIP.
+// The page: the ROM checked, the console chosen, the program fetched from this site (or chosen), the ZIP.
 import { zipParts } from "./zip.mjs";
-import { checkRom, sdFiles } from "./rom.mjs";
+import { checkRom, programConsole, sdFiles } from "./rom.mjs";
 import { ciaWithIcon } from "./cia.mjs";
 import { makePak } from "./pak.mjs";
 
 const $ = (id) => document.getElementById(id);
-const state = { rom: null, sha1: "", program: null, cia: null, tag: "own build" };
+// site: this site's programs by console (release/), own: the visitor's own build and its console
+const state = { rom: null, sha1: "", console: "3ds", site: {}, own: null, cia: null, tag: "", siteTag: "" };
+const PROGRAM = { "3ds": "acww.3dsx", switch: "acww.nro" };
 
 function say(id, text, kind = "") {
   $(id).textContent = text;
@@ -14,8 +16,20 @@ function say(id, text, kind = "") {
 async function bytesOf(file) {
   return new Uint8Array(await file.arrayBuffer());
 }
+function program() {
+  return state.own?.console === state.console ? state.own.data : state.site[state.console] ?? null;
+}
+// what the page shows for the chosen console
 function refresh() {
-  $("build").disabled = !(state.rom && state.program);
+  const c = state.console, fromSite = !!state.site[c];
+  state.tag = fromSite ? state.siteTag : "own build";
+  if (fromSite) say("program-status", `This site's build: ${state.siteTag}.`, "ok");
+  else if (state.own && state.own.console !== c) say("program-status", `That file is not a ${PROGRAM[c]}.`, "bad");
+  else say("program-status", state.own ? `Your own ${PROGRAM[c]}.` : "", state.own ? "ok" : "");
+  $("program-own").hidden = fromSite;
+  $("cia-row").hidden = !(c === "3ds" && state.cia);
+  for (const el of document.querySelectorAll("[data-console]")) el.hidden = el.dataset.console !== c;
+  $("build").disabled = !(state.rom && program());
 }
 
 $("rom").addEventListener("change", async () => {
@@ -36,47 +50,56 @@ $("rom").addEventListener("change", async () => {
   refresh();
 });
 
+for (const radio of document.querySelectorAll("input[name=console]")) {
+  radio.addEventListener("change", () => {
+    state.console = radio.value;
+    refresh();
+  });
+}
+
 $("program").addEventListener("change", async () => {
   const file = $("program").files[0];
-  state.program = file ? await bytesOf(file) : null;
+  const data = file ? await bytesOf(file) : null;
+  state.own = data ? { data, console: programConsole(data) } : null;
   refresh();
 });
 
 $("build").addEventListener("click", async () => {
-  let cia = $("cia").checked ? state.cia : null;
+  const c = state.console;
+  let cia = c === "3ds" && $("cia").checked ? state.cia : null;
   // the game's icon on it, from the ROM; a .cia this can't read keeps its placeholder
   if (cia) cia = await ciaWithIcon(cia, state.rom).catch((e) => (console.warn(e), cia));
   // the data pack: the ROM's files without the game's code, for this build
   const sha1 = Uint8Array.from(state.sha1.match(/../g), (h) => parseInt(h, 16));
-  const files = sdFiles({ program: state.program, pak: makePak(state.rom, sha1, state.tag), cia });
+  const files = sdFiles({ console: c, program: program(), pak: makePak(state.rom, sha1, state.tag), cia });
   const url = URL.createObjectURL(new Blob(zipParts(files), { type: "application/zip" }));
+  const name = `acww-${c}-sd.zip`;
   const a = document.createElement("a");
   a.href = url;
-  a.download = "acww-3ds-sd.zip";
+  a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 60000);
-  say("build-status", "Done: acww-3ds-sd.zip.", "ok");
+  say("build-status", `Done: ${name}.`, "ok");
 });
 
-// This site's build (tools/build_site.py puts a release's files in release/); without one, the visitor's own.
+// This site's builds (tools/build_site.py puts a release's files in release/); without one, the visitor's own.
 try {
   const info = await (await fetch("release/release.json")).json();
   const res = await fetch("release/acww.3dsx");
   if (!res.ok) throw new Error(String(res.status));
-  state.program = new Uint8Array(await res.arrayBuffer());
-  state.tag = info.tag;
-  say("program-status", `This site's build: ${info.tag}.`, "ok");
+  state.site["3ds"] = new Uint8Array(await res.arrayBuffer());
+  state.siteTag = info.tag;
   $("release").textContent = `Build ${info.tag}, SHA-256 ${info.sha256}.`;
-  // The HOME Menu version, if the release has one: offered only when it is here.
+  // The Switch's program and the HOME Menu version, if the release has them: offered only when they are here.
+  if (info.nro) {
+    const n = await fetch("release/acww.nro");
+    if (n.ok) state.site.switch = new Uint8Array(await n.arrayBuffer());
+  }
   if (info.cia) {
     const c = await fetch("release/acww.cia");
-    if (c.ok) {
-      state.cia = new Uint8Array(await c.arrayBuffer());
-      $("cia-row").hidden = false;
-    }
+    if (c.ok) state.cia = new Uint8Array(await c.arrayBuffer());
   }
 } catch {
-  say("program-status", "");
-  $("program-own").hidden = false;
+  // (no build on this site: refresh() asks for the visitor's own)
 }
 refresh();

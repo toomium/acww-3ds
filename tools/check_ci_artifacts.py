@@ -19,7 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 ALLOWED = [
-    "dist/release/",  # a release's files: acww.3dsx, acww.cia and SHA256SUMS.txt (build.yml)
+    "dist/release/",  # a release's files: acww.3dsx, acww.cia, acww.nro and SHA256SUMS.txt (build.yml)
     "_site",          # the website: web/ and the release's program (pages.yml, tools/build_site.py)
 ]
 

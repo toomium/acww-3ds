@@ -1,8 +1,8 @@
 From: acww-3ds <noreply@invalid>
 Subject: [PATCH] Tools: remove the --plain build (the 3DS build without
- N3DS_PORT)
+ ENHANCED_PORT)
 
-The comparison build is no longer needed. PORT stays: the PC build compiles the same sources without N3DS_PORT.
+The comparison build is no longer needed. PORT stays: the PC build compiles the same sources without ENHANCED_PORT.
 ---
  docs/host.md            | 2 +-
  tools/configure_host.py | 9 +--------
@@ -30,7 +30,7 @@ index d132e35..df6c64b 100644
                           "against the declared size, also arrays inside structs) and undefined (the rest of UBSan); "
                           "every report recovers (the run goes on), docs/host.md")
 -parser.add_argument("--plain", action="store_true",
--                    help="--os 3ds: the comparison build for tests (a separate build: suffix _plain): N3DS_PORT not "
+-                    help="--os 3ds: the comparison build for tests (a separate build: suffix _plain): ENHANCED_PORT not "
 -                         "defined, the PC port's model of the DS hardware kept; without it --os 3ds builds the port")
  parser.add_argument("--regen-gen", action="store_true",
                      help="regenerate modern/gen/gaps.c from the DS build's delinking (build/usa/delinks)")
@@ -43,8 +43,8 @@ index d132e35..df6c64b 100644
 -        args.suffix = "_plain"
 -elif args.plain:
 -    sys.exit("--plain: --os 3ds only")
--PORT = N3DS and not args.plain  # the 3DS port itself (N3DS_PORT); --plain is the build it is measured against
-+PORT = N3DS  # the 3DS port itself (N3DS_PORT); the PC build compiles the same sources without it
+-PORT = N3DS and not args.plain  # the 3DS port itself (ENHANCED_PORT); --plain is the build it is measured against
++PORT = N3DS  # the 3DS port itself (ENHANCED_PORT); the PC build compiles the same sources without it
  if MAC:
      if args.guards or args.oracle:
          sys.exit("--os macos: no --guards or --oracle (GNU ld / melonDS builds)")

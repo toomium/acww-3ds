@@ -35,7 +35,7 @@ jobs:
         shell: bash
         run: |
           tag=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName --jq '.[0].tagName' || true)
-          if [ -n "$tag" ] && gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern acww.3dsx --pattern acww.cia --dir dist; then
+          if [ -n "$tag" ] && gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern acww.3dsx --pattern acww.cia --pattern acww.nro --dir dist; then
             python3 tools/build_site.py --out _site --release-dir dist --tag "$tag"
           else
             python3 tools/build_site.py --out _site

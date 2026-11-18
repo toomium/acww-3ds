@@ -33,6 +33,7 @@ try {
   mkdirSync(join(work, "release"));
   writeFileSync(join(work, "release", "acww.3dsx"), program);
   writeFileSync(join(work, "release", "acww.cia"), enc.encode("made-up cia\n"));
+  writeFileSync(join(work, "release", "acww.nro"), enc.encode("made-up nro\n"));
   execFileSync("python3", [join(root, "tools/build_site.py"), "--out", join(work, "site"),
     "--release-dir", join(work, "release"), "--tag", "v0.0.0-test"], { stdio: "inherit" });
 
@@ -66,11 +67,21 @@ try {
   await wait("zip", () => blobs.length);
   await fetch("/zip", { method: "POST", body: blobs[0] });
   out.buildStatus = w.document.getElementById("build-status").textContent;
+  // the Switch: chosen, its program from the site, no .cia offered, its ZIP
+  const sw = w.document.querySelector("input[name=console][value=switch]");
+  sw.checked = true;
+  sw.dispatchEvent(new w.Event("change"));
+  out.switchCia = w.document.getElementById("cia-row").hidden;
+  out.switchProgram = w.document.getElementById("program-status").textContent;
+  w.document.getElementById("build").click();
+  await wait("switch zip", () => blobs.length > 1);
+  await fetch("/zip2", { method: "POST", body: blobs[1] });
+  out.switchStatus = w.document.getElementById("build-status").textContent;
   await fetch("/result", { method: "POST", body: JSON.stringify(out) });
 } catch (e) { await fetch("/result", { method: "POST", body: JSON.stringify({ error: String(e) }) }); }
 </script>`;
 
-  let zip, finish;
+  let zip, zip2, finish;
   const done = new Promise((resolve) => (finish = resolve));
   server = createServer(async (req, res) => {
     const chunks = [];
@@ -78,7 +89,7 @@ try {
     const body = Buffer.concat(chunks);
     const url = new URL(req.url, "http://localhost");
     if (req.method === "POST") {
-      if (url.pathname === "/zip") zip = body; else finish(JSON.parse(body.toString()));
+      if (url.pathname === "/zip") zip = body; else if (url.pathname === "/zip2") zip2 = body; else finish(JSON.parse(body.toString()));
       return res.end("ok");
     }
     if (url.pathname === "/") return res.setHeader("content-type", "text/html").end(harness);
@@ -111,7 +122,10 @@ try {
   assert.ok(result.realRom.includes(sha1) && result.realRom.includes("ADME"));
   assert.equal(result.realDisabled, true);
   assert.ok(result.release.includes("v0.0.0-test"));
-  assert.match(result.buildStatus, /Done/);
+  assert.match(result.buildStatus, /Done: acww-3ds-sd\.zip/);
+  assert.equal(result.switchCia, true);
+  assert.match(result.switchProgram, /This site's build: v0\.0\.0-test/);
+  assert.match(result.switchStatus, /Done: acww-switch-sd\.zip/);
 
   // the ZIP the page made: names in order, every CRC right, the data pack made for this build from this ROM
   writeFileSync(join(work, "sd.zip"), zip);
@@ -124,6 +138,16 @@ assert pak[:8] == b"ACWWPAK\\0" and pak[12:23] == b"v0.0.0-test" and pak[44:64].
 print(",".join(z.namelist()), repr(z.read("3ds/acww/acww.3dsx")), repr(z.read("cias/acww.cia")))
 `, join(work, "sd.zip"), sha1]).toString().trim();
   assert.equal(listing, `3ds/acww/acww.3dsx,3ds/acww/game.pak,cias/acww.cia b'made-up program\\n' b'made-up cia\\n'`);
+  writeFileSync(join(work, "switch.zip"), zip2);
+  const switchListing = execFileSync("python3", ["-c", `
+import sys, zipfile
+z = zipfile.ZipFile(sys.argv[1])
+assert z.testzip() is None
+pak = z.read("switch/acww/game.pak")
+assert pak[:8] == b"ACWWPAK\\0" and pak[12:23] == b"v0.0.0-test" and pak[44:64].hex() == sys.argv[2]
+print(",".join(z.namelist()), repr(z.read("switch/acww/acww.nro")))
+`, join(work, "switch.zip"), sha1]).toString().trim();
+  assert.equal(switchListing, `switch/acww/acww.nro,switch/acww/game.pak b'made-up nro\\n'`);
   console.log("web builder browser test passed (" + want + ")");
 } finally {
   cleanup();

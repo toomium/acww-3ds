@@ -280,7 +280,7 @@ index 05418a35..9ca7e8bf 100644
 +    return host_hblank(line);
 +}
 +// ACWW_FRAMESKIP=<n>: the screens drawn every n + 1 frames (the 3DS's default: 1, every other one; elsewhere and in
-+// the enhanced port, N3DS_PORT, 0).
++// the enhanced port, ENHANCED_PORT, 0).
 +// The game runs every frame as before - its H-blank work line by line, the geometry engine - only the pictures are
 +// skipped; the 3D one is drawn in the frame before the screens' (the 2D renderer shows the last frame's 3D picture)
 +// ACWW_FRAMESKIP=auto (or auto<n>): the game keeps its speed where it can: a frame that ends more than a frame behind
@@ -295,7 +295,7 @@ index 05418a35..9ca7e8bf 100644
 +            if (sSkipMax < 1) sSkipMax = 1;
 +            return n = 0;
 +        }
-+#if defined(__3DS__) && !defined(N3DS_PORT)
++#if defined(__3DS__) && !defined(ENHANCED_PORT)
 +        n = 1;
 +#else
 +        n = 0;
@@ -347,7 +347,7 @@ index 05418a35..9ca7e8bf 100644
          in.gpu = sGpu2dMode;
 +        in.layers = sPica ? pdisp_layers() : NULL;
 +        in.deferLayers = sPica;  // (drawn by the GPU thread: pica_display.c)
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +        if (sPica && !pdisp_threaded()) in.deferLayers = 2;  // (at once: the banks not copied)
 +#endif
          gpu2d_render_frame(&in);

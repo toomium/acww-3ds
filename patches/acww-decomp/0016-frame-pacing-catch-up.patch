@@ -16,7 +16,7 @@ index 0868ccb..fddab55 100644
      sNextFrame += 16715000;                                  // 59.83 Hz
      if (now > sNextFrame + 1000000000u) sNextFrame = now;  // far behind: don't try to catch up
      sLateMs = now > sNextFrame ? (int)((now - sNextFrame) / 1000000) : 0;
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    // more than two frames behind: the rest is let go. Catching up runs the frames back to back, faster than 60 a
 +    // second: a New 3DS is fast enough to, after a slow frame or a file read, and the game is seen to speed up for up
 +    // to a second. Two frames' slack still smooths the frames' unequal lengths, and ACWW_FRAMESKIP=auto (render.c)

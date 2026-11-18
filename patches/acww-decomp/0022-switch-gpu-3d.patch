@@ -1,0 +1,27 @@
+From: acww-3ds <noreply@invalid>
+Subject: [PATCH] Switch: the 3D drawn by its GPU (render.c picks gpu3d_gl.c as the 3DS picks gpu3d_pica.c)
+
+On the Switch render_init starts the console GPU interface (g3p_*, gpu3d_use_pica), which gpu3d/gpu3d_gl.c (the
+port repository's own file) implements there with OpenGL ES 3: the geometry engine's lists drawn by the GPU and
+read back, the screens composited on the CPU. ACWW_RENDERER3D=own keeps the CPU's rasteriser (which the console
+port's geometry engine doesn't feed: no 3D then).
+---
+ modern/host/render.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/modern/host/render.c b/modern/host/render.c
+index 3a5d47e..ed5f5d6 100644
+--- a/modern/host/render.c
++++ b/modern/host/render.c
+@@ -133,6 +133,11 @@ void render_init(void) {
+         gpu3d_pica_direct(sPica);  // (its 3D pictures then straight from the GPU, not read back)
+         gpu3d_set_wide(sPica && pica3d && gpu3d_wide_wanted());  // (ACWW_WIDE: drawn only by these two)
+     }
++#elif defined(__SWITCH__)
++    // the Switch: the polygons drawn by its GPU (gpu3d/gpu3d_gl.c, the same interface as the 3DS's gpu3d_pica.c) and
++    // read back, the screens composited on the CPU; ACWW_RENDERER3D=own: the CPU's rasteriser
++    if (sOwn3d && !env_is("ACWW_RENDERER3D", "own") && !gpu3d_use_pica())
++        fprintf(stderr, "render: the Switch GPU's renderer couldn't start: own\n");
+ #endif
+     if (getenv("ACWW_RENDER_COMPARE_MAX")) sCompareMax = strtol(getenv("ACWW_RENDER_COMPARE_MAX"), 0, 10);
+     if (getenv("ACWW_RENDER_SELFTEST") || getenv("ACWW_RENDER_SELFTEST3D")) sCompare = sCompare ? sCompare : 1;

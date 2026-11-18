@@ -36,7 +36,7 @@ index 911aab96..f2b27f10 100644
  }
  
  // NNSi_SndArcStrmSetupBuffers-like (read channel tables, allocate stream buffers from heap)
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +// The enhanced port: the ARM7's sound runs on a thread of its own ahead of the game's,
 +// whose answers to the stream's alarms come up to a frame late or later; with the DS's 2 KB a channel (blocks of
 +// about 5 ms, refilled within 16 ms) most blocks were dropped as silence, so the buffers are 16 times as large (blocks
@@ -53,7 +53,7 @@ index 911aab96..f2b27f10 100644
              mem = NNS_SndHeapAlloc(heap, size, StrmBufDisposeCallback, c, 0);
              if (mem == 0) return 0;
              ForceStopStrm__sndarc_stream(c);
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +            sStrmHeapMem[i] = mem;
 +            mem = sStrmBuf[i];
 +            size = c->numChannels << 15;
@@ -65,7 +65,7 @@ index 911aab96..f2b27f10 100644
  void StrmBufDisposeCallback(void *mem, u32 size, void *arg, u32 unused)
  {
      NNSSndStrmPlayer *c = arg;
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    if (mem != sStrmHeapMem[c - data_021fc650]) return;
 +#else
      if (mem != c->buffer) return;
@@ -81,7 +81,7 @@ index 1d019c4c..90ba8df5 100644
  // GX_ResetBankForTexPltt
  u32 GX_ResetBankForTexPltt(void) { return resetBankForX_(&data_021fcbe2); }
  
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +// the enhanced port (VRAM): the texture and texture palette banks, left where they are for an
 +// upload (GX_BeginLoadTex, GX_BeginLoadTexPltt)
 +u32 GXi_TexBanks(void) { return data_021fcbe0; }
@@ -99,7 +99,7 @@ index 5d8d8f14..3446ef4a 100644
      if (data_0213bfec != -1) {
          MI_WaitDma(data_0213bfec);
      }
-+#ifndef N3DS_PORT  // (the enhanced port: they stayed mapped, GX_BeginLoadTex)
++#ifndef ENHANCED_PORT  // (the enhanced port: they stayed mapped, GX_BeginLoadTex)
      GX_SetBankForTex(data_021fcc00);
 +#endif
      data_021fcc08 = 0;
@@ -109,7 +109,7 @@ index 5d8d8f14..3446ef4a 100644
  
  // GX_BeginLoadBGExtPltt
  void GX_BeginLoadTexPltt(void) {
-+#ifdef N3DS_PORT  // (the banks stay mapped: GX_LoadTexPltt writes into their memory)
++#ifdef ENHANCED_PORT  // (the banks stay mapped: GX_LoadTexPltt writes into their memory)
 +    u32 GXi_TexPlttBanks(void);
 +    s32 v = (s32)GXi_TexPlttBanks();
 +#else
@@ -121,7 +121,7 @@ index 5d8d8f14..3446ef4a 100644
  
  // GX_LoadBGExtPltt
  void GX_LoadTexPltt(const void *src, u32 offset, u32 size) {
-+#ifdef N3DS_PORT  // (the enhanced port: straight into the banks' own memory, at once)
++#ifdef ENHANCED_PORT  // (the enhanced port: straight into the banks' own memory, at once)
 +    MIi_CpuCopy32(src, host_vram_lcdc_direct(data_021fcbf8 + offset, size), size);
 +    return;
 +#endif
@@ -132,7 +132,7 @@ index 5d8d8f14..3446ef4a 100644
      if (data_0213bfec != -1) {
          MI_WaitDma(data_0213bfec);
      }
-+#ifndef N3DS_PORT  // (the enhanced port: they stayed mapped, GX_BeginLoadTexPltt)
++#ifndef ENHANCED_PORT  // (the enhanced port: they stayed mapped, GX_BeginLoadTexPltt)
      GX_SetBankForTexPltt(data_021fcbfc);
 +#endif
      data_021fcbfc = 0;
@@ -146,9 +146,9 @@ index 8a711de8..c6308c17 100644
  // GX_LoadTex
  void GX_LoadTex(const void *pSrc, u32 dstSlotOffset, u32 szByte) {
      void *pLCDC;
-+#ifdef N3DS_PORT
-+    void N3ds_GxLoadTex(const void *pSrc, u32 dstSlotOffset, u32 szByte);  // (modern/n3ds/gx_direct.c)
-+    N3ds_GxLoadTex(pSrc, dstSlotOffset, szByte);
++#ifdef ENHANCED_PORT
++    void Port_GxLoadTex(const void *pSrc, u32 dstSlotOffset, u32 szByte);  // (modern/port/gx_direct.c)
++    Port_GxLoadTex(pSrc, dstSlotOffset, szByte);
 +    return;
 +#endif
  
@@ -162,7 +162,7 @@ index e6ae880e..dc40d852 100644
  
  // GX_BeginLoadTex
  void GX_BeginLoadTex(void) {
-+#ifdef N3DS_PORT  // (the banks stay mapped: GX_LoadTex writes into their memory)
++#ifdef ENHANCED_PORT  // (the banks stay mapped: GX_LoadTex writes into their memory)
 +    u32 GXi_TexBanks(void);
 +    s32 i = (s32)GXi_TexBanks();
 +#else
@@ -179,9 +179,9 @@ index d5a5371a..7d23f42a 100644
  // FS_ConvertPathToFileID
  BOOL FS_ConvertPathToFileID(FSFileID *id, const char *path) {
      FSFile tmp;
-+#ifdef N3DS_PORT  // (the enhanced port: a file of the chosen language from the EUR ROM, modern/ds/n3ds_lang.c)
-+    extern BOOL N3ds_LangFileID(FSFileID *id, const char *path);
-+    if (N3ds_LangFileID(id, path)) return 1;
++#ifdef ENHANCED_PORT  // (the enhanced port: a file of the chosen language from the EUR ROM, modern/ds/port_lang.c)
++    extern BOOL Port_LangFileID(FSFileID *id, const char *path);
++    if (Port_LangFileID(id, path)) return 1;
 +#endif
      FS_InitFile(&tmp);
      return FSi_FindPath(&tmp, path, id, 0) ? 1 : 0;
@@ -194,9 +194,9 @@ index 1de4db62..c541b959 100644
              FS_LoadArchive(&data_021fea94, 0, fat->offset, fat->length, fnt->offset, fnt->length, FSi_ReadRomCallback,
                            (int (*)(FSArc *, void *, u32, u32))FSi_WriteDummyCallback);
          }
-+#ifdef N3DS_PORT  // (the enhanced port: the EUR ROM's archive, modern/ds/n3ds_lang.c)
-+        extern void N3ds_LangInit(void);
-+        N3ds_LangInit();
++#ifdef ENHANCED_PORT  // (the enhanced port: the EUR ROM's archive, modern/ds/port_lang.c)
++        extern void Port_LangInit(void);
++        Port_LangInit();
 +#endif
      }
  }
@@ -209,7 +209,7 @@ index 66af08c2..8130354c 100644
      c->dst = (uptr)dst;
      c->len = len;
      if (cmd <= 3) MI_StopDma(cmd);
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    {   // the enhanced port: the whole read from the ROM image at once (card.c), not page by
 +        // page through the card's registers and DMA; then finished as the SDK finishes a read
 +        extern void host_card_read(u32 addr, void *dst, u32 n);
@@ -231,7 +231,7 @@ index 66af08c2..8130354c 100644
      if (cb) cb(arg);
  }
  
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +// The enhanced port: a stream command on the save memory done at once in the host
 +// (pxi7.c), not 256 bytes at a time through the ARM7 with a reply to wait for each, then finished as
 +// CARDi_RequestStreamCommandCore finishes. An async one (on the card thread) finishes a millisecond later: the game
@@ -261,7 +261,7 @@ index 66af08c2..8130354c 100644
      c->f2c = g;
      c->f30 = h;
      c->f34 = mode;
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    if (async) {  // (CARDi_StreamHost on the card thread)
 +        CARDi_SetTask(CARDi_StreamHost);
 +        return 1;
@@ -281,7 +281,7 @@ index e529e13f..25b51f8f 100644
          return;
      }
      NNS_G3dGeFlushBuffer();
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    // the enhanced port: the list straight into the geometry engine, which runs it in place without time, not by
 +    // the GX FIFO's DMA in pieces of 472 bytes with an interrupt, the DMA's registers and the masks after each (the
 +    // callback only cleared the busy flag, set above)

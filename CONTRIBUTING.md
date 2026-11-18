@@ -26,10 +26,12 @@ only build that is published is a release's `acww.3dsx`, made by CI from a versi
 
 ## Changes to the port's own files
 
-New files that upstream does not have go in `3ds_port/`, at the path they have in the source tree
-(`3ds_port/modern/host/pica_display.c`). `bootstrap.py` links them into `build/upstream`; after adding one, run
-`python tools/bootstrap.py` again (no `--clean`) to make its link. Edit them in `3ds_port/`: the links in
-`build/upstream` point there.
+New files that upstream does not have go in an overlay under `ports/`, at the path they have in the source tree:
+`ports/common/overlay/` for what every console port uses, `ports/<console>/overlay/` for one console's own files
+(`ports/3ds/overlay/modern/host/pica_display.c`). `bootstrap.py` links every overlay into the one `build/upstream`
+(two overlays may not hold the same path; `configure_host.py --os` picks what a build compiles); after adding a
+file, run `python tools/bootstrap.py` again (no `--clean`) to make its link. Edit them under `ports/`: the links in
+`build/upstream` point there. What lies beside an overlay (`ports/3ds/cia/`) is not linked.
 
 ## Changes to upstream's files
 
@@ -45,21 +47,7 @@ git format-patch -1 -o ../../patches/acww-decomp/
 ```
 
 Rename the new file to the next number (`0015-<area>.patch`) and commit it in this repository. Keep each patch to one
-change. Wrap changes to the game's own sources in `#ifdef N3DS_PORT` so the other builds stay as they were.
-
-## Bringing work across from the fork
-
-While the port is still developed on a branch of the fork, `tools/export_from_fork.py` rebuilds `patches/` and
-`3ds_port/` from it:
-
-```sh
-python tools/export_from_fork.py --fork /path/to/acww-decomp --base upstream/main --branch <branch>
-```
-
-It sorts every changed upstream file into one patch by the table `AREAS` in the script, and stops with an error if
-a file matches no area or two areas. Add its pattern to the table, then run it again. It replaces `patches/` and
-`3ds_port/` completely, and only adds to `docs/images/`. To move to a newer upstream, change the commit in
-`upstream.lock` and make a fresh export from a branch that is based on it.
+change. Wrap changes to the game's own sources in `#ifdef ENHANCED_PORT` so the other builds stay as they were.
 
 ## Checks
 
@@ -78,7 +66,7 @@ make check ROM=path/to/rom.nds            # after it: lists what differs, exit 1
 
 `make check` plays the PC build headless and deterministic from a new game to the first save and compares SHA-256
 hashes of screenshots, sound and save file with `build/check/baseline.txt` (one run, a few minutes). It covers the
-game's code and the shared runtime with our patches on the PC, not the 3DS-only code (`N3DS_PORT`): that still needs
+game's code and the shared runtime with our patches on the PC, not the console ports' code (`ENHANCED_PORT`): that still needs
 Azahar or a console. It needs a ROM, so it is not part of `make test` or CI.
 
 The game's own checks (screenshots, sound and save file against a baseline) need a ROM and are described in

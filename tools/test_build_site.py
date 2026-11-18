@@ -42,6 +42,19 @@ class BuildSite(unittest.TestCase):
             self.assertEqual((out / "release" / "acww.cia").read_bytes(), b"made-up cia")
             self.assertIs(json.loads((out / "release" / "release.json").read_text())["cia"], True)
 
+    def test_site_with_the_switch_program(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rel = Path(tmp) / "dist"
+            rel.mkdir()
+            (rel / "acww.3dsx").write_bytes(b"made up")
+            (rel / "acww.nro").write_bytes(b"made-up nro")
+            out = Path(tmp) / "site"
+            build_site.build(out, rel, "v0.0.3")
+            self.assertEqual((out / "release" / "acww.nro").read_bytes(), b"made-up nro")
+            info = json.loads((out / "release" / "release.json").read_text())
+            self.assertIs(info["nro"], True)
+            self.assertNotIn("cia", info)
+
     def test_missing_program_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(SystemExit):

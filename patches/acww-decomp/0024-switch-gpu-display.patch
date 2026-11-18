@@ -1,0 +1,136 @@
+From: acww-3ds <noreply@invalid>
+Subject: [PATCH] Switch: the screens composited and shown by its GPU (the wide view), as the 3DS's
+
+render.c starts the GPU's compositing on the Switch as on the 3DS (pdisp_init: gl_display.c in the port
+repository, with the 3DS's compositing logic, comp2d.c), the 3D pictures straight to it and the wide view when
+ACWW_WIDE wants it; ACWW_COMPOSITE=cpu keeps the CPU's.
+
+The SDL frontend then makes no window of its own: gl_display.c has the display's window (an SDL window's surface
+would take it), pdisp_attach_screens makes its surface, and show() is pdisp_present. The touch screen is read through
+libnx (pdisp_touch_read: SDL gives no touches without its window), mapped by gl_display.c's layout to the DS's screen
+and its anchored UI (pdisp_window_to_ds). Not shown over the screens yet: the key binding screen, ACWW_WINSHOT.
+---
+ modern/host/frontend_sdl.c | 29 +++++++++++++++++++++++++++--
+ modern/host/render.c       | 13 ++++++++++---
+ 2 files changed, 37 insertions(+), 5 deletions(-)
+
+diff --git a/modern/host/frontend_sdl.c b/modern/host/frontend_sdl.c
+index 44a84fd..8111c0b 100644
+--- a/modern/host/frontend_sdl.c
++++ b/modern/host/frontend_sdl.c
+@@ -39,12 +39,14 @@
+ #include "plat.h"
+ #include "render.h"
+ #include "wgpu_display.h"
++#include "pica_display.h"
+ 
+ static AcwwShm *sShm;
+ static SDL_Window *sWin;
+ static SDL_Renderer *sRen;
+ static SDL_Texture *sTex, *sOverlayTex;
+ static int sGpu;  // the window drawn by wgpu_display.c
++static int sPdisp;  // the Switch: the window drawn by gl_display.c (pdisp_present), the screens composited by the GPU
+ static SDL_AudioDeviceID sDev;
+ static int sScale = 2, sMute;
+ static SDL_GameController *sPads[4];
+@@ -179,6 +181,14 @@ AcwwShm *frontend_backend_open(const char *argv0) {
+     if (!sShm || !stack) { fprintf(stderr, "frontend: no memory\n"); SDL_Quit(); free(sShm); return sShm = 0; }
+     sShm->magic = ACWW_SHM_MAGIC;
+     sFeSp = host_coro_prepare(stack, FE_STACK, fe_main, 0);
++#ifdef __SWITCH__
++    // (the screens composited by the GPU: gl_display.c has the display's window itself, no SDL window, whose surface
++    // would take it; SDL still gives the buttons and the touch screen)
++    if (render_presenting()) {
++        pdisp_attach_screens();
++        sPdisp = 1;
++    } else
++#endif
+     sWin = SDL_CreateWindow("Animal Crossing: Wild World (native)", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+ #ifdef __SWITCH__  // (the window is the whole display; the screens letterboxed in it, one above the other)
+                             1280, 720, SDL_WINDOW_FULLSCREEN
+@@ -210,7 +220,7 @@ AcwwShm *frontend_backend_open(const char *argv0) {
+         }
+         if (!sGpu) fprintf(stderr, "frontend: the GPU can't draw into the window: the screens are read back\n");
+     }
+-    if (sWin && !sGpu) {
++    if (sWin && !sGpu && !sPdisp) {
+         sRen = SDL_CreateRenderer(sWin, -1, vsync ? SDL_RENDERER_PRESENTVSYNC : 0);
+         if (!sRen) sRen = SDL_CreateRenderer(sWin, -1, SDL_RENDERER_SOFTWARE);
+     }
+@@ -218,7 +228,7 @@ AcwwShm *frontend_backend_open(const char *argv0) {
+         SDL_RenderSetLogicalSize(sRen, 256, 384);  // letterboxed, the mouse in logical coordinates
+         sTex = SDL_CreateTexture(sRen, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, 256, 384);
+     }
+-    if (!sTex && !sGpu) {
++    if (!sTex && !sGpu && !sPdisp) {
+         fprintf(stderr, "frontend: no window (%s): running headless\n", SDL_GetError());
+         SDL_Quit();
+         free(sShm);
+@@ -292,6 +302,10 @@ static struct { int held, x, y; } sMouse, sFinger;
+ static SDL_FingerID sFingerId;
+ // a point of the window (its coordinates) in the screens' (256x384); the SDL renderer's mouse events have them already
+ static void window_to_logical(int wx, int wy, int *x, int *y) {
++    if (sPdisp) {  // (the display's pixels, 1280 x 720)
++        if (!pdisp_window_to_ds((float)wx, (float)wy, 1280, 720, x, y)) *x = *y = -1;
++        return;
++    }
+     if (!sGpu) { *x = wx, *y = wy; return; }
+     int w, h;
+     float r[4];
+@@ -301,6 +315,10 @@ static void window_to_logical(int wx, int wy, int *x, int *y) {
+     *y = (int)SDL_floorf(((float)wy - r[1]) * 384.0f / r[3]);
+ }
+ static void finger_to_logical(float fx, float fy, int *x, int *y) {
++    if (sPdisp) {  // (gl_display.c's layout on the display, 1280 x 720; off the DS's screens: none)
++        if (!pdisp_window_to_ds(fx * 1280, fy * 720, 1280, 720, x, y)) *x = *y = -1;
++        return;
++    }
+     int w, h;
+     SDL_GetWindowSize(sWin, &w, &h);
+     if (sGpu) { window_to_logical((int)(fx * w), (int)(fy * h), x, y); return; }
+@@ -312,6 +330,9 @@ static void finger_to_logical(float fx, float fy, int *x, int *y) {
+ static void update_touch(void) {
+     int held = sFinger.held || sMouse.held;
+     int x = sFinger.held ? sFinger.x : sMouse.x, y = sFinger.held ? sFinger.y : sMouse.y;
++#ifdef __SWITCH__
++    if (sPdisp) held = pdisp_touch_read(&x, &y);  // (SDL gives no touches without a window of its own)
++#endif
+     if (held && y >= 192 && y < 384 && x >= 0 && x < 256) {
+         sShm->touch_x = x;
+         sShm->touch_y = y - 192;
+@@ -469,6 +490,10 @@ static void script_step(void) {
+ 
+ // the frame and, while it is open, the binding screen over it
+ static void show(void) {
++    if (sPdisp) {  // shortcut: without the binding screen's overlay and ACWW_WINSHOT
++        pdisp_present();
++        return;
++    }
+     int changed;
+     const uint32_t *overlay = ui_overlay(&changed);
+     if (sGpu) {
+diff --git a/modern/host/render.c b/modern/host/render.c
+index ed5f5d6..c14df40 100644
+--- a/modern/host/render.c
++++ b/modern/host/render.c
+@@ -134,10 +134,17 @@ void render_init(void) {
+         gpu3d_set_wide(sPica && pica3d && gpu3d_wide_wanted());  // (ACWW_WIDE: drawn only by these two)
+     }
+ #elif defined(__SWITCH__)
+-    // the Switch: the polygons drawn by its GPU (gpu3d/gpu3d_gl.c, the same interface as the 3DS's gpu3d_pica.c) and
+-    // read back, the screens composited on the CPU; ACWW_RENDERER3D=own: the CPU's rasteriser
+-    if (sOwn3d && !env_is("ACWW_RENDERER3D", "own") && !gpu3d_use_pica())
++    // the Switch, as the 3DS: the polygons drawn by its GPU (gpu3d/gpu3d_gl.c, the same interface as gpu3d_pica.c),
++    // the screens composited and shown by it (gl_display.c, with the 3DS's comp2d.c), unless ACWW_COMPOSITE=cpu
++    int gl3d = sOwn3d && !env_is("ACWW_RENDERER3D", "own") && gpu3d_use_pica();
++    if (sOwn3d && !env_is("ACWW_RENDERER3D", "own") && !gl3d)
+         fprintf(stderr, "render: the Switch GPU's renderer couldn't start: own\n");
++    if (sOwn && !sCompare && !env_is("ACWW_COMPOSITE", "cpu")) {
++        sPica = pdisp_init();
++        if (!sPica) fprintf(stderr, "render: the Switch GPU's compositing couldn't start: the CPU's\n");
++        gpu3d_pica_direct(sPica);  // (its 3D pictures then straight from the GPU, not read back)
++        gpu3d_set_wide(sPica && gl3d && gpu3d_wide_wanted());  // (ACWW_WIDE: drawn only by these two)
++    }
+ #endif
+     if (getenv("ACWW_RENDER_COMPARE_MAX")) sCompareMax = strtol(getenv("ACWW_RENDER_COMPARE_MAX"), 0, 10);
+     if (getenv("ACWW_RENDER_SELFTEST") || getenv("ACWW_RENDER_SELFTEST3D")) sCompare = sCompare ? sCompare : 1;

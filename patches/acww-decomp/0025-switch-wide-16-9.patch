@@ -1,0 +1,44 @@
+From: acww-3ds <noreply@invalid>
+Subject: [PATCH] Switch: the wide view 16:9 (426 x 240: GPU3D_WIDE_X 85)
+
+The Switch's display is 16:9, so its wide view is too: the 3D picture 426 x 240 around the DS's 256 x 192
+(GPU3D_WIDE_X 85, the 3DS's 72: its top screen's 400), and the game's view frustum widened by as much
+(ViewFrustum::calcPlanes), so that what the wider picture shows is drawn and its actors run. The 3DS's unchanged.
+---
+ modern/host/gpu3d/gpu3d.h | 5 +++++
+ src/main/unk_02039c08.cpp | 4 ++++
+ 2 files changed, 9 insertions(+)
+
+diff --git a/modern/host/gpu3d/gpu3d.h b/modern/host/gpu3d/gpu3d.h
+index 197e2e4..c45098d 100644
+--- a/modern/host/gpu3d/gpu3d.h
++++ b/modern/host/gpu3d/gpu3d.h
+@@ -48,7 +48,12 @@ void gpu3d_set_raster(int on);
+ // The wide view (the 3DS's ACWW_WIDE=1, an experiment): polygons kept beyond the DS's screen, clipped at a picture of
+ // (256 + 2 * GPU3D_WIDE_X) x (192 + 2 * GPU3D_WIDE_Y) with the DS's in its middle; their screen positions (hx, hy)
+ // then not wrapped (negative in the margins). Only for a renderer that draws them there (gpu3d_pica.c's).
++// The 3DS: 400 x 240, its top screen; the Switch: 426 x 240, 16:9 (src/main/unk_02039c08.cpp's frustum follows these).
++#ifdef __SWITCH__
++enum { GPU3D_WIDE_X = 85, GPU3D_WIDE_Y = 24 };
++#else
+ enum { GPU3D_WIDE_X = 72, GPU3D_WIDE_Y = 24 };
++#endif
+ int gpu3d_wide_wanted(void);  // ACWW_WIDE set
+ void gpu3d_set_wide(int on);
+ int gpu3d_wide(void);
+diff --git a/src/main/unk_02039c08.cpp b/src/main/unk_02039c08.cpp
+index 9de9d7a..446e00e 100644
+--- a/src/main/unk_02039c08.cpp
++++ b/src/main/unk_02039c08.cpp
+@@ -41,7 +41,11 @@ void ViewFrustum::calcPlanes() {
+     static int wide = -1;
+     if (wide < 0) wide = gpu3d_wide_wanted();
+     if (wide) {
++#ifdef __SWITCH__  // (its 16:9 picture, 426 x 240: GPU3D_WIDE_X 85)
++        x = x * (128 + 85 + 96) / 128;
++#else
+         x = x * (128 + 72 + 96) / 128;
++#endif
+         y = y * (96 + 24 + 96) / 96;
+     }
+ #endif

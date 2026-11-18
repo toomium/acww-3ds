@@ -1,0 +1,27 @@
+From: acww-3ds <noreply@invalid>
+Subject: [PATCH] SDL frontend: on the Switch the window is the whole display (1280 x 720)
+
+On the Switch SDL's window is the display whatever size is asked for; asked for 512 x 768, the renderer's logical
+size was worked out for that and the picture came out stretched, the bottom screen off the display. Asked for
+1280 x 720 (full screen), the two screens are letterboxed one above the other, and a finger on the touch screen
+reaches the bottom one (checked in Eden: "Touch to start" starts the game).
+---
+ modern/host/frontend_sdl.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/modern/host/frontend_sdl.c b/modern/host/frontend_sdl.c
+index 668222e..44a84fd 100644
+--- a/modern/host/frontend_sdl.c
++++ b/modern/host/frontend_sdl.c
+@@ -180,7 +180,11 @@ AcwwShm *frontend_backend_open(const char *argv0) {
+     sShm->magic = ACWW_SHM_MAGIC;
+     sFeSp = host_coro_prepare(stack, FE_STACK, fe_main, 0);
+     sWin = SDL_CreateWindow("Animal Crossing: Wild World (native)", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
++#ifdef __SWITCH__  // (the window is the whole display; the screens letterboxed in it, one above the other)
++                            1280, 720, SDL_WINDOW_FULLSCREEN
++#else
+                             256 * sScale, 384 * sScale, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI
++#endif
+ #if defined(__APPLE__)
+                             | (render_on_gpu() ? SDL_WINDOW_METAL : 0)
+ #endif

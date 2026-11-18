@@ -57,7 +57,7 @@ index 112008bb..003c1571 100644
  
  #include "gpu3d_internal.h"
 +#include "../prof.h"
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +#include "../plat.h"
 +#endif
  
@@ -88,7 +88,7 @@ index 112008bb..003c1571 100644
 -static G3Polygon sPolyRam[2][MAX_POLYGONS];
 +// the two banks of vertex and polygon RAM: one filled by the geometry engine, one drawn (the port: the GPU's
 +// vertex lists instead, gpu3d_pica.c)
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +enum { RAM_VERTICES = 1, RAM_POLYGONS = 1 };
 +#else
 +enum { RAM_VERTICES = MAX_VERTICES, RAM_POLYGONS = MAX_POLYGONS };
@@ -108,7 +108,7 @@ index 112008bb..003c1571 100644
 +// the wide view: the x and y clip planes at +-num/den w (1/1: the DS's)
 +static int sWide;
 +static s64 sClipNum[3] = {1, 1, 1}, sClipDen[3] = {1, 1, 1};
-+#ifdef N3DS_PORT  // (the enhanced port: on unless ACWW_WIDE=0)
++#ifdef ENHANCED_PORT  // (the enhanced port: on unless ACWW_WIDE=0)
 +int gpu3d_wide_wanted(void) { return !getenv("ACWW_WIDE") || atoi(getenv("ACWW_WIDE")); }
 +#else
 +int gpu3d_wide_wanted(void) { return getenv("ACWW_WIDE") && atoi(getenv("ACWW_WIDE")); }
@@ -127,7 +127,7 @@ index 112008bb..003c1571 100644
      if (sFeaturesOn && !sFeatureFrame[id]) sFeatureFrame[id] = sFrame + 1;
  }
 +// (the check inline: the census is mostly off, and some features are noted for every vertex)
-+#ifdef N3DS_PORT  // (the port: no census, a check less in every command, vertex and polygon)
++#ifdef ENHANCED_PORT  // (the port: no census, a check less in every command, vertex and polygon)
 +#define g3_feature(id) ((void)0)
 +#else
 +#define g3_feature(id) (sFeaturesOn ? g3_feature(id) : (void)0)
@@ -145,7 +145,7 @@ index 112008bb..003c1571 100644
  static Entry sPipe[4], sFifo[256];
  static int sPipeHead, sPipeN, sFifoHead, sFifoN;
  static int sPushPopQueued, sTestQueued;
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +// ACWW_G3D_TICKS=1: the system ticks spent in the writes to the GX FIFO, and what went through, printed every 300 frames
 +static int sTicksOn = -1;
 +static u64 sTickSum, sTickWords, sTickVerts, sTickNormals;
@@ -173,7 +173,7 @@ index 112008bb..003c1571 100644
      for (int j = 0; j < 4; j++)
          cur->m[12 + j] += (s32)(((s64)p[0] * cur->m[j] + (s64)p[1] * cur->m[4 + j] + (s64)p[2] * cur->m[8 + j]) >> 12);
  }
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +static int sSeg = -1;  // the id of sClip in the list being filled (g3p_matrix), -1 none yet
 +#endif
  static void update_clip(void) {
@@ -182,7 +182,7 @@ index 112008bb..003c1571 100644
      sClip = sProj;
      mtx_mult(&sClip, &sPos);  // clip = position * projection
      sClipDirty = 0;
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    sSeg = -1;
 +#endif
  }
@@ -213,7 +213,7 @@ index 112008bb..003c1571 100644
      s32 n[3];
      for (int i = 0; i < 3; i++)
          n[i] = (s32)(((s64)sNormal[0] * sVec.m[i] + (s64)sNormal[1] * sVec.m[4 + i] + (s64)sNormal[2] * sVec.m[8 + i]) >> 12);
-+#ifndef N3DS_PORT  // (diagnostics only; the port has no light records)
++#ifndef ENHANCED_PORT  // (diagnostics only; the port has no light records)
      if (sFeaturesOn > 1) {
          if (!sLightRecs) sLightRecs = calloc(65536, sizeof *sLightRecs);
          LightRec *r = &sLightRecs[sLightRecN & 0xffff];
@@ -416,7 +416,7 @@ index 112008bb..003c1571 100644
  }
  
  static void submit_polygon(void) {
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    if (sBenchSkip & 4) return;
 +#endif
 +    HOST_PROF(PROF_POLY);
@@ -446,7 +446,7 @@ index 112008bb..003c1571 100644
          return;
      }
  
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    {   // the port: the polygon straight into the GPU's list (g3p_polygon), which clips it; here only the DS's
 +        // far-plane rule (crossing it: hidden unless attr bit 12) and what lies wholly beyond the near or far plane
 +        int far = 0, near = 0;
@@ -515,11 +515,11 @@ index 112008bb..003c1571 100644
  }
  
  static void submit_vertex(void) {
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    sTickVerts++;
 +#endif
      if (!sInBegin) return;
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    if (sBenchSkip & 8) return;
 +#endif
 +    HOST_PROF(PROF_VERTEX);
@@ -529,13 +529,13 @@ index 112008bb..003c1571 100644
      s64 x = sVtx[0], y = sVtx[1], z = sVtx[2];
      for (int i = 0; i < 4; i++)
          v->pos[i] = (s32)((x * sClip.m[i] + y * sClip.m[4 + i] + z * sClip.m[8 + i] + 0x1000 * (s64)sClip.m[12 + i]) >> 12);
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    if (sSeg < 0) sSeg = g3p_matrix(sClip.m);
 +    v->obj[0] = (s32)x, v->obj[1] = (s32)y, v->obj[2] = (s32)z, v->seg = (u16)sSeg;
 +    g3p_vertex(sSeg, v->obj);
 +#endif
      for (int i = 0; i < 3; i++) v->color[i] = sVtxColor[i] ? sVtxColor[i] << 4 | 0xf : 0;
-+#ifndef N3DS_PORT
++#ifndef ENHANCED_PORT
      v->dbgLight = sCurLightRec;
 +#endif
      if ((sTexParam >> 30) == 3) {  // texture coordinates from the vertex
@@ -579,7 +579,7 @@ index 112008bb..003c1571 100644
      }
      fprintf(stderr, "\n");
  }
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +// ACWW_G3D_BENCH, while sCmdStat: the commands outside the display lists counted, and the ticks from each one's start
 +// to the next one's (so with the way to it: the block's unpacking)
 +static unsigned long sCmdN[256];
@@ -587,14 +587,14 @@ index 112008bb..003c1571 100644
 +static int sCmdStat, sCmdLast;
 +#endif
  static void execute(u8 cmd, const u32 *p) {
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    if (sCmdStat) {
 +        u64 t = host_plat_ticks();
 +        sCmdT[sCmdLast] += t - sCmdMark, sCmdMark = t, sCmdLast = cmd;
 +        sCmdN[cmd]++;
 +    }
 +#endif
-+#ifndef N3DS_PORT  // (diagnostics: the command history and ACWW_GPU3D_CMDLOG; the port has neither)
++#ifndef ENHANCED_PORT  // (diagnostics: the command history and ACWW_GPU3D_CMDLOG; the port has neither)
      {   // (diagnostics: ACWW_GPU3D_CMDLOG=<frame>: every command executed in that frame, with the texture param)
          static long f = -2;
          if (f == -2) f = getenv("ACWW_GPU3D_CMDLOG") ? atol(getenv("ACWW_GPU3D_CMDLOG")) : -1;
@@ -612,7 +612,7 @@ index 112008bb..003c1571 100644
          sCurLightRec = -1;
          break;
      case 0x21:
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +        sTickNormals++;
 +#endif
          sNormal[0] = sx10(p[0]);
@@ -625,7 +625,7 @@ index 112008bb..003c1571 100644
 -        lighting();
 +        {
 +            HOST_PROF(PROF_LIGHT);
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +            if (sBenchSkip & 2) break;
 +#endif
 +            u32 normal = p[0] & 0x3fffffff;
@@ -677,7 +677,7 @@ index 112008bb..003c1571 100644
          sViewport[3] = (191 - (p[0] >> 24 & 0xff)) & 0xff;
          sViewport[4] = (sViewport[2] - sViewport[0] + 1) & 0x1ff;
          sViewport[5] = ((p[0] >> 24 & 0xff) - sViewport[1] + 1) & 0xff;
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +        g3p_viewport(sViewport);
 +#endif
          break;
@@ -687,7 +687,7 @@ index 112008bb..003c1571 100644
      }
  }
  
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +#include "gpu3d_geom_list.h"
 +#endif
 +
@@ -698,7 +698,7 @@ index 112008bb..003c1571 100644
      if (sExecCount >= need) {
          u8 c = (u8)sExecCmd;
          sExecCmd = -1;
-+#ifdef N3DS_PORT  // (no busy time: GXSTAT never says busy, the game doesn't wait)
++#ifdef ENHANCED_PORT  // (no busy time: GXSTAT never says busy, the game doesn't wait)
 +        execute(c, sExecParams);
 +        return;
 +#endif
@@ -709,7 +709,7 @@ index 112008bb..003c1571 100644
      if (r->wbuffer) g3_feature(F_WBUFFER);
      else if (r->npoly) g3_feature(F_ZBUFFER_POLYS);
      if (r->manualSort) g3_feature(F_MANUAL_SORT);
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    r->list = g3p_swap();
 +    r->npoly = 0;
 +    sNumPolys = 0;
@@ -723,7 +723,7 @@ index 112008bb..003c1571 100644
      sStripValid = 0;
      sFlushPending = 0;
 +    gG3Swaps++;
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    dl_swap();
 +#endif
  }
@@ -766,7 +766,7 @@ index 112008bb..003c1571 100644
  
 +static void write32_n_impl(uint32_t addr, const uint32_t *v, uint32_t n) {
 +    uint32_t i = 0;
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    // the port: a block for the GX FIFO decoded where it lies, each command run with its parameters in place.
 +    // A block may start with the parameters of a packed word written before (the SDK's G3_* functions: the command
 +    // word, then its parameters with MIi_CpuSend32; in town about 60 % of the GX FIFO's words): those commands first.
@@ -807,12 +807,12 @@ index 112008bb..003c1571 100644
 +    for (; i < n; i++) write32_impl(addr, v[i]);
 +}
 +
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +#include "gpu3d_geom_bench.h"
 +#endif
 +
 +void gpu3d_write32(uint32_t addr, uint32_t v) {
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    if (sBenchState == 1 && addr >= 0x04000400 && addr < 0x04000600) { bench_record(addr, &v, 1, 1); return; }
 +    if (sTicksOn > 0 && addr >= 0x04000400 && addr < 0x04000600) {
 +        u64 t = host_plat_ticks();
@@ -826,7 +826,7 @@ index 112008bb..003c1571 100644
 +}
 +
 +void gpu3d_write32_n(uint32_t addr, const uint32_t *v, uint32_t n) {
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    if (sBenchState == 1 && addr >= 0x04000400 && addr < 0x04000600) { bench_record(addr, v, n, 0); return; }
 +    if (sTicksOn > 0 && addr >= 0x04000400 && addr < 0x04000600) {
 +        u64 t = host_plat_ticks();
@@ -846,7 +846,7 @@ index 112008bb..003c1571 100644
  void gpu3d_frame(const uint8_t *const bank[9]) {
      gG3Banks = bank;
      sFrame++;
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    if (sTicksOn < 0) sTicksOn = getenv("ACWW_G3D_TICKS") ? atoi(getenv("ACWW_G3D_TICKS")) : 0;
 +    if (sTicksOn > 0 && sFrame % 300 == 0) {
 +        fprintf(stderr, "g3d: %llu ticks, %llu words, %llu vertices, %llu normals in 300 frames; %llu ticks a vertex\n",
@@ -864,7 +864,7 @@ index 112008bb..003c1571 100644
      if (sFlushPending) {
 +        g3_render_wait();  // (the list drawn from and its polygon RAM)
          do_swap();
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +        bench_frame();
 +#endif
          drain();
@@ -883,7 +883,7 @@ index 8ec76558..16b34408 100644
      s32 farPos[4], farColor[3];  // (an edge crossing both planes of an axis: the second crossing from there)
      u8 dbgClips;      // (diagnostics: the interpolations behind it; for the last one the inside and outside
      s32 dbgClip[8];   // colours, din, dout)
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    s32 obj[3];       // the object coordinates and the list's id of their clip matrix (g3p_matrix): the picture can
 +    u16 seg;          // be drawn again with other matrices (interpolation)
 +#endif
@@ -894,7 +894,7 @@ index 8ec76558..16b34408 100644
      u32 fogColor;
      u16 fogOffset;
      u8 fogTable[32];
-+    int list;  // the port (N3DS_PORT): the GPU's vertex list of these polygons (g3p_swap); poly is empty
++    int list;  // the port (ENHANCED_PORT): the GPU's vertex list of these polygons (g3p_swap); poly is empty
  } G3RenderState;
  
  extern G3RenderState gG3Render;
@@ -902,7 +902,7 @@ index 8ec76558..16b34408 100644
  extern u8 gG3VramCnt[9];
 +extern int gG3Diagnostics;  // (gpu3d_set_diagnostics: the comparisons' reports want more kept)
 +extern u32 gG3VramGeneration;  // (gpu3d_vram_generation)
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +// the texture uploads since the last call (vram.c): bank, offset, bytes; -1 none known (take the slots in full)
 +int host_vram_take_uploads(unsigned (*out)[3], int max);
 +// the parts of the flat texture images (gpu3d_tex.h) the last setup changed, for gpu3d_pica.c: an offset into the
@@ -932,14 +932,14 @@ index 8ec76558..16b34408 100644
 +void *g3p_picture(void);  // the last picture drawn for the GPU's compositing (a C3D_Tex), NULL none
 +void g3p_wait(void);  // until a picture being drawn (by the GPU thread) is done: before its list or textures change
 +void g3_texture_rgba(u32 texparam, u32 texpal, u32 *out);  // (gpu3d_raster.c)
-+// the port (N3DS_PORT): the geometry engine's polygons go straight into the GPU's
++// the port (ENHANCED_PORT): the geometry engine's polygons go straight into the GPU's
 +// vertex list, in the DS screen's clip space (the viewport applied, not clipped: the GPU clips), while the list
 +// before is drawn
 +void g3p_viewport(const u32 vp[6]);  // VIEWPORT: x1, y1 (from the top), x2, y2, width, height (gpu3d_geom.c's sViewport)
 +void g3p_polygon(G3Vertex *const *v, int n, u32 attr, u32 texparam, u32 texpal, int translucent, int wbuffer);
 +void g3p_bench_reset(void);  // (ACWW_G3D_BENCH, gpu3d_geom.c)
 +int g3p_swap(void);  // the list filled since the last swap handed over (its number, G3RenderState.list), a new one begun
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +// the display lists run converted (gpu3d_geom_list.h): the vertices of a list made at once, then the polygons from them
 +typedef struct { s32 pos[4]; s32 color[3]; s16 tex[2]; s16 obj[3]; u16 seg; } G3LVertex;  // (G3Vertex's used fields)
 +typedef struct { int nv, npoly, nbatch, lastCount; } G3pMark;  // the list being filled's counts (g3p_list_mark)
@@ -1051,11 +1051,11 @@ index 8e0c350a..02862b64 100644
 +    // the picture of the last one again: nothing it is drawn from changed (gG3Render is set at a swap, the
 +    // textures change with VRAMCNT: g3_tex_setup). The game swaps every third frame.
 +    static u32 drawnSwaps = ~0u, drawnGeneration = ~0u;
-+#ifdef N3DS_PORT  // (the port: the same list again between the game's pictures, interpolated: gpu3d_pica.c)
++#ifdef ENHANCED_PORT  // (the port: the same list again between the game's pictures, interpolated: gpu3d_pica.c)
 +    int between = sPica && g3p_between(&gG3Render) && sPicaLastDirect;
 +#endif
 +    if (gG3Swaps == drawnSwaps && gG3VramGeneration == drawnGeneration && gG3VramGeneration != ~0u && !sDiag) {
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +        if (between) g3p_render(sR, sImgFlat, sPalFlat, 0, 0, 0, 0);
 +#endif
 +        return;
@@ -1118,13 +1118,13 @@ index 3d2b5c18..ebb598ef 100644
  
 -static void g3_tex_setup(void) {
 +// returns 0, doing nothing, while the VRAM's mapping generation is the one of the last call (the slots unchanged)
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +#include "gpu3d_tex_uploads.h"
 +#endif
 +static int g3_tex_setup(void) {
 +    static u32 done = ~0u;
 +    if (gG3VramGeneration != ~0u && gG3VramGeneration == done) return 0;
-+#ifdef N3DS_PORT
++#ifdef ENHANCED_PORT
 +    gG3TexParts = -1;
 +    if (done != ~0u && gG3VramGeneration != ~0u && g3_tex_uploads()) {
 +        done = gG3VramGeneration;

@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Animal Crossing: Wild World 3DS: web builder</title>
+  <title>acww-port: web builder</title>
   <link rel="stylesheet" href="css/site.css">
 </head>
 <body>
 <main>
-  <h1>Animal Crossing: Wild World 3DS</h1>
-  <p class="lead">Make the SD card's files from your own cartridge dump. Everything happens in your browser:
+  <h1>acww-port</h1>
+  <p class="lead">Animal Crossing: Wild World for the 3DS and the Switch. Make the SD card's files from your own cartridge dump. Everything happens in your browser:
     <strong>your ROM is never uploaded</strong>.</p>
 
   <section>
@@ -20,10 +20,13 @@
   </section>
 
   <section>
-    <h2>2. The program</h2>
+    <h2>2. Your console and the program</h2>
+    <label><input type="radio" name="console" value="3ds" checked> Nintendo 3DS</label>
+    <label><input type="radio" name="console" value="switch"> Nintendo Switch</label>
     <p id="program-status" class="status">Looking for this site's build…</p>
-    <p id="program-own" hidden>This site carries no build. Build <code>acww.3dsx</code> yourself (the repository's
-      README says how) and choose it here: <input type="file" id="program" accept=".3dsx"></p>
+    <p id="program-own" hidden>This site carries no build for this console. Build <code>acww.3dsx</code> (3DS) or
+      <code>acww.nro</code> (Switch) yourself (the repository's README says how) and choose it here:
+      <input type="file" id="program" accept=".3dsx,.nro"></p>
   </section>
 
   <section>
@@ -32,12 +35,16 @@
       (<code>cias/acww.cia</code>: install it once with FBI; it opens the game from the SD card, and gets its icon from your ROM)</label>
     <button id="build" disabled>Build the ZIP</button>
     <p id="build-status" class="status"></p>
-    <p>Unpack the ZIP onto the root of the SD card: it holds the folder <code>3ds/acww/</code> with
+    <p data-console="3ds">Unpack the ZIP onto the root of the SD card: it holds the folder <code>3ds/acww/</code> with
       <code>acww.3dsx</code> and <code>game.pak</code> (your ROM's files, without the game's code),
       and <code>cias/acww.cia</code> if you chose the HOME Menu version. The settings are on the options page in the
       game's pause menu.
       Start the game from the Homebrew Launcher. Sound needs the 3DS's DSP firmware at
       <code>sd:/3ds/dspfirm.cdc</code>, dumped from your own console.</p>
+    <p data-console="switch" hidden>Unpack the ZIP onto the root of the SD card: it holds the folder
+      <code>switch/acww/</code> with <code>acww.nro</code> and <code>game.pak</code> (your ROM's files, without the
+      game's code). Start the game from the Homebrew Menu (Atmosphère). The settings are on the options page in the
+      game's pause menu; pressing the left stick changes the screen layout.</p>
     <p class="warn">Don't share the ZIP: it holds your cartridge's data and the game's code.</p>
   </section>
 
