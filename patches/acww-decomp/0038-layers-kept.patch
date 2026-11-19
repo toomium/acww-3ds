@@ -1,0 +1,159 @@
+From 7efa6dbbab70584d6f568270b69db4ea8bdc0730 Mon Sep 17 00:00:00 2001
+From: acww-3ds <noreply@invalid>
+Date: Tue, 17 Nov 2026 19:30:00 +0100
+Subject: [PATCH 5/5] 2D: an engine's layers kept when its record is the frame
+ before's
+
+gpu2d_draw_layers made every line state of both engines again in every frame, though in town about 97 % of the
+frames bring no new 2D content. Now (the 3DS port, the layers drawn at once: an Old 3DS without the GPU thread) an
+engine whose record is the one drawn last, but for the reference points, with the same backdrop and palette changes
+and no BG drawn by the CPU, keeps its line states and OBJ priorities; the reference points come from the record and
+the sprites are made as before. ACWW_LAYERS_KEEP=0 turns it off; ACWW_LAYERS_CHECK=1 draws them anyway and counts
+the lines that differ. Azahar (ACWW_PICA_THREAD=0, the scripted run to frame 8400, both engines checked): no line
+differing; in town both engines kept in 300 of 300 frames; 2D layers 1.17 -> 0.82 ms a frame (Azahar's ms).
+---
+ modern/host/gpu2d/gpu2d.c | 85 +++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 85 insertions(+)
+
+diff --git a/modern/host/gpu2d/gpu2d.c b/modern/host/gpu2d/gpu2d.c
+index 6cfdeb7..34a7e53 100644
+--- a/modern/host/gpu2d/gpu2d.c
++++ b/modern/host/gpu2d/gpu2d.c
+@@ -6,6 +6,7 @@
+ // c << 2 | c >> 4).
+ 
+ #include <stdio.h>
++#include <stdlib.h>
+ 
+ #include "gpu2d_internal.h"
+ 
+@@ -752,6 +753,8 @@ typedef struct {
+     int optPageY, optBtnY;
+     u8 objAnchor[2][128];
+     Gpu2dBgAnchor bgAnchor[2];
++    u32 serial;  // (the frame recorded: layers_keep)
++    int atOnce;  // (deferLayers 2: drawn before the next record is made)
+ #endif
+ } Record;
+ static Record sRecord[2];
+@@ -767,6 +770,7 @@ static u32 record_changes_so_far(void) { return sRecord[sRecording].changes; }
+ static void record_start(const Gpu2dFrameInput *in) {
+     Record *r = &sRecord[sRecording ^= 1];
+ #ifdef ENHANCED_PORT
++    r->serial = sFrame, r->atOnce = in->deferLayers == 2;
+     memcpy(r->margin, sMargin, sizeof r->margin);
+     sMargin[0].bg = sMargin[1].bg = 0;
+     r->iris = sIris;
+@@ -849,6 +853,44 @@ static void record_end(const Gpu2dFrameInput *in) {
+     r->topEngine = top_engine();
+ }
+ 
++#ifdef ENHANCED_PORT
++// The 3DS port: an engine's layers kept from the frame before (its line states and OBJ priorities in Gpu2dLayers),
++// the reference points taken from the record, when its record is the one drawn last but for them (the lines' words,
++// the backdrop, the palettes' changes) and the CPU draws none of its BGs (their VRAM may have changed); the sprites
++// are made as before. In town about 97 % of the frames bring no new 2D content (old-3ds.md section 7). Only when the
++// layers are drawn at once (deferLayers 2: the record drawn before is still the frame before's).
++// ACWW_LAYERS_KEEP=0: off. ACWW_LAYERS_CHECK=1: drawn anyway, and the lines that differ from the kept ones counted.
++static int sKeepOn = -1, sKeepCheck, sKeepStats;
++static u32 sKeepDrawn = ~0u;  // (the serial of the record drawn last)
++static unsigned long sKept[2], sKeepFrames, sKeepDiffer;
++static int sCpuBg[2] = {1, 1};  // (the engine's last drawing had a BG drawn by the CPU: cpu_bg)
++static int layers_keep(const Record *r, const Record *p, int n) {
++    if (!r->atOnce || p->serial != sKeepDrawn || !sLayers->sprite || sCpuBg[n] || r->changes != p->changes ||
++        r->start[0x100 * n] != p->start[0x100 * n] || memcmp(r->change, p->change, r->changes * sizeof r->change[0]))
++        return 0;
++    for (int y = 0; y < SCREEN_H; y++) {
++        const u32 *a = r->lines[n][y], *b = p->lines[n][y];
++        if (!memcmp(a, b, GPU2D_LINE_WORDS * sizeof *a)) continue;
++        u32 d = (a[12] ^ b[12]) | (a[13] ^ b[13]);  // (all but BG2X, BG2Y, BG3X, BG3Y and the reference points)
++        for (int k = 0; k < 10; k++) d |= a[k] ^ b[k];
++        for (int k = 16; k < G2L_REF; k++) d |= a[k] ^ b[k];
++        for (int k = G2L_REF + 4; k < GPU2D_LINE_WORDS; k++) d |= a[k] ^ b[k];
++        if (d) return 0;
++    }
++    return 1;
++}
++// whether a BG of engine n was drawn by the CPU (render_line, layers_line), from the lines just drawn
++static int cpu_bg(const Record *r, int n) {
++    for (int y = 0; y < SCREEN_H; y++) {
++        u32 dispcnt = r->lines[n][y][G2L_REGS], gpuBg = sLayers->line[n][y].gpuBg;
++        if ((n == 1 && !(r->lines[n][y][G2L_POWCNT] & 0x200)) || (dispcnt & 0x80)) continue;
++        for (int k = 0; k < 4; k++)
++            if ((dispcnt & 0x100u << k) && !(gpuBg >> k & 1) && !(k == 0 && n == 0 && (dispcnt & 8))) return 1;
++    }
++    return 0;
++}
++#endif
++
+ void gpu2d_draw_layers(int record) {
+     static Engine draw[2];  // (the drawing thread's: the state from the record line by line)
+     static u32 work[0x1000 / 4];  // the palettes, then OAM, as at the line drawn
+@@ -878,11 +920,34 @@ void gpu2d_draw_layers(int record) {
+     for (int n = 0; n < 2; n++) draw[n].objAnchor = r->objAnchor[n];
+ #endif
+     int ax = 0, ay = 0, rowH = 0;  // (the sprite atlas, filled at line 0)
++#ifdef ENHANCED_PORT
++    if (sKeepOn < 0) {
++        sKeepOn = !getenv("ACWW_LAYERS_KEEP") || atoi(getenv("ACWW_LAYERS_KEEP"));
++        sKeepCheck = getenv("ACWW_LAYERS_CHECK") && atoi(getenv("ACWW_LAYERS_CHECK"));
++        sKeepStats = sKeepCheck || (getenv("ACWW_FPS") && atoi(getenv("ACWW_FPS")));
++    }
++    int keep[2] = {0, 0}, check[2] = {0, 0};
++    static Gpu2dLineState was[2][192];
++    static u8 wasPrio[2][192];
++    for (int n = 0; n < 2 && sKeepOn; n++) {
++        keep[n] = layers_keep(r, &sRecord[record ^ 1], n);
++        sKept[n] += (unsigned long)keep[n];
++        if (keep[n] && sKeepCheck)
++            check[n] = 1, keep[n] = 0, memcpy(was[n], sLayers->line[n], sizeof was[n]), memcpy(wasPrio[n], sLayers->objPrio[n], sizeof wasPrio[n]);
++    }
++    sKeepDrawn = r->serial;
++#endif
+     for (int line = 0; line < SCREEN_H; line++) {
+         for (; applied < r->lines[0][line][G2L_PALETTE]; applied++) work[r->change[applied].index] = r->change[applied].value;
+         for (int n = 0; n < 2; n++) {
+             Engine *d = &draw[n];
+             const u32 *l = r->lines[n][line];
++#ifdef ENHANCED_PORT
++            if (keep[n]) {  // (render_line's reference points: refLine is the line)
++                for (int k = 0; k < 4; k++) sLayers->ref[n][line][k] = (int32_t)l[G2L_REF + k];
++                if (line) continue;
++            }
++#endif
+             for (int k = 0; k < REG_SIZE / 4; k++) memcpy(d->regs + 4 * k, &l[G2L_REGS + k], 4);
+             for (int i = 0; i < 2; i++) d->refX[i] = (s32)l[G2L_REF + 2 * i], d->refY[i] = (s32)l[G2L_REF + 2 * i + 1];
+             d->refLine = line;
+@@ -897,9 +962,29 @@ void gpu2d_draw_layers(int record) {
+             else if (line == 0 && r->haveObj0[n]) d->obj = r->obj0[n];
+             else if (line == 0) memset(&d->obj, 0, sizeof d->obj);
+             else gpu2d_render_obj_line(d, line, &d->obj);
++#ifdef ENHANCED_PORT
++            if (keep[n]) continue;
++#endif
+             render_line(d, 0, line);
+         }
+     }
++#ifdef ENHANCED_PORT
++    for (int n = 0; n < 2; n++)
++        if (!keep[n]) sCpuBg[n] = cpu_bg(r, n);
++    for (int n = 0; n < 2; n++) {
++        if (!check[n]) continue;
++        for (int y = 0; y < SCREEN_H; y++)
++            if (memcmp(&was[n][y], &sLayers->line[n][y], sizeof was[n][y]) || wasPrio[n][y] != sLayers->objPrio[n][y]) {
++                if (sKeepDiffer++ < 20) fprintf(stderr, "gpu2d: engine %d's kept layers differ at line %d\n", n, y);
++            }
++    }
++    if (sKeepStats && ++sKeepFrames % 300 == 0) {
++        fprintf(stderr, "gpu2d: the layers kept in %lu (engine A) and %lu (engine B) of 300 frames%s", sKept[0], sKept[1],
++                sKeepCheck ? "" : "\n");
++        if (sKeepCheck) fprintf(stderr, "; checked: %lu lines differing\n", sKeepDiffer);
++        sKept[0] = sKept[1] = 0;
++    }
++#endif
+ }
+ 
+ void gpu2d_render_frame(const Gpu2dFrameInput *in) {
+-- 
+2.43.0
+
