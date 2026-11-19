@@ -15,7 +15,7 @@
 // Each vertex also keeps its object coordinates and its clip matrix (Rec, Seg: normal memory), so that the picture
 // can be drawn again from other matrices (replay: the pictures between the game's).
 enum { LISTS = 3, LIST_VERTS = MAX_POLYGONS * 6, MAX_SEGS = 1024, NO_SEG = 0xffff };  // (a quad is two triangles)
-enum { GPU_VERTS = 12288, GPU_INDICES = 49152, GPU_DRAWS = 512 };  // (the display lists drawn by the GPU: below)
+enum { GPU_DRAWS = 512 };  // (the display lists drawn by the GPU: below)
 typedef struct {
     u32 attr, texparam, texpal;
     u8 trans, wbuffer;
@@ -358,11 +358,15 @@ void g3p_list_polygon(const u32 *idx, int n, u32 attr, u32 texparam, u32 texpal,
 // with their normals are put once into linear memory, with the indices of its triangles; each time the list is sent
 // it is one draw from there (a batch of its own, in the order made), with the matrix and the lighting's values of
 // that moment for the vertex shader.
+// The room: 65,536 vertices (the 16-bit indices' most, 1.3 MB), less if linear memory hasn't that. It was 12,288,
+// and the bench's first minute in town filled 12,285 of them (old3ds-test 81): the lists of every place visited
+// later stayed on the CPU's path, the game slower the longer it was played.
 // shortcut: the room is never given back (a list whose words change, or more lists than fit, stay on the CPU's path);
-// a cache that frees old lists when a game area needs more than GPU_VERTS.
+// a cache that frees old lists if a session ever needs more than 65,536 vertices (ACWW_G3D_DLSTATS shows the room used).
 static G3GVertex *sGv;
 static u16 *sGi;
-static u32 sGvN, sGiN;
+static u32 sGvN, sGiN, sGvRoom, sGiRoom;
+u32 g3p_gpu_used(u32 *room) { *room = sGvRoom; return sGvN; }  // (gpu3d_geom_list.h's report)
 int g3p_gpu_store(const G3GVertex *v, u32 nv, u16 *idx, u32 ni, u32 *first) {
 #ifdef G3_NO_GPU_LISTS  // (a backend that doesn't draw them: the lists stay on the geometry engine's path)
     (void)v, (void)nv, (void)idx, (void)ni, (void)first;
@@ -370,13 +374,22 @@ int g3p_gpu_store(const G3GVertex *v, u32 nv, u16 *idx, u32 ni, u32 *first) {
 #endif
     static int failed;
     if (!sGv && !failed) {  // (failed 1: no memory; 2: full)
-        sGv = G3_LINEAR_ALLOC(GPU_VERTS * sizeof *sGv), sGi = G3_LINEAR_ALLOC(GPU_INDICES * sizeof *sGi);
-        if (!sGv || !sGi) {
+        static const u32 kRoom[3] = {65536, 32768, 12288};  // (vertices; twice as many indices: the lists use 1.6)
+        for (int k = 0; k < 3 && !sGv; k++) {
+            sGv = G3_LINEAR_ALLOC(kRoom[k] * sizeof *sGv), sGi = G3_LINEAR_ALLOC(2 * kRoom[k] * sizeof *sGi);
+            if (sGv && sGi) sGvRoom = kRoom[k], sGiRoom = 2 * kRoom[k];
+            else {
+                if (sGv) G3_LINEAR_FREE(sGv);
+                if (sGi) G3_LINEAR_FREE(sGi);
+                sGv = 0, sGi = 0;
+            }
+        }
+        if (!sGv) {
             failed = 1;
             fprintf(stderr, "pica: no linear memory for the display lists' vertices: they stay on the CPU's path\n");
-        }
+        } else fprintf(stderr, "pica: room for the display lists drawn by the GPU: %lu vertices\n", (unsigned long)sGvRoom);
     }
-    if (!failed && (sGvN + nv > GPU_VERTS || sGiN + ni > GPU_INDICES)) {
+    if (!failed && (sGvN + nv > sGvRoom || sGiN + ni > sGiRoom)) {
         failed = 2;  // (the lists so far stay)
         fprintf(stderr, "pica: the display lists' memory is full (%lu vertices, %lu indices): the others stay on the CPU's path\n",
                 (unsigned long)sGvN, (unsigned long)sGiN);

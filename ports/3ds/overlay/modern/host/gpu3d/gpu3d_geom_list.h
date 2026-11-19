@@ -286,6 +286,7 @@ static DlEntry *dl_entry(const u32 *v, u32 n, u32 pre) {
 }
 
 // ACWW_G3D_DLSTATS=1 (or ACWW_G3D_DLCHECK=1): every 600 swaps what happened to the lists
+u32 g3p_gpu_used(u32 *room);  // (gpu3d_lists.h)
 static void dl_swap(void) {
     if (!(sDlStats || sDlCheck) || gG3Swaps % 600) return;
     fprintf(stderr, "g3d dl: swap %lu: lists %lu, cache hits %lu, converted %lu, replaced %lu; not convertible:",
@@ -297,6 +298,10 @@ static void dl_swap(void) {
                 "kind or no room %lu (%lu different lists); the GPU's pieces left out, their box outside the view, %lu, %lu of %lu "
                 "vertices", sDlGpuDraws, sDlGpuCpu, sDlGpuWhy[1], sDlGpuWhy[2], sDlGpuNot, sDlBoxOut, sDlBoxOutV, sDlBoxV);
     if (sDlCheck) fprintf(stderr, "; checked %lu, differences %lu", sDlStat.checked, sDlStat.diffs);
+    if (sDlGpu) {
+        u32 room, used = g3p_gpu_used(&room);
+        fprintf(stderr, "; the GPU's room used %lu of %lu vertices", (unsigned long)used, (unsigned long)room);
+    }
     fprintf(stderr, "\n");
 }
 

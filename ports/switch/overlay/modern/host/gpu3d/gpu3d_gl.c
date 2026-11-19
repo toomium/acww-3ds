@@ -35,6 +35,7 @@ typedef struct {
 
 // ---- the lists, the pictures between the game's: as gpu3d_pica.c's (gpu3d_lists.h); no display lists drawn by the GPU
 #define G3_LINEAR_ALLOC malloc
+#define G3_LINEAR_FREE free
 #define G3_NO_GPU_LISTS
 #include "gpu3d_lists.h"
 

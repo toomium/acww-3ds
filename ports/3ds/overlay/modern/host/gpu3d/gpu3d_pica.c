@@ -199,6 +199,7 @@ static GPU_TEXTURE_WRAP_PARAM wrap(u32 tp, int axis) {
 
 #ifdef ENHANCED_PORT
 #define G3_LINEAR_ALLOC linearAlloc
+#define G3_LINEAR_FREE linearFree
 #include "gpu3d_lists.h"  // (the lists, the pictures between, the display lists drawn by the GPU)
 #endif
 
