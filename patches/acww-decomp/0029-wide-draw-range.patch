@@ -6,14 +6,14 @@ The game draws the field's units (trees, flowers, rocks) only 9 to each side of 
 (the 3DS's 400 x 240, the Switch's 426 x 240) they came in and went out inside the picture. With the wide view both
 widen with the picture (9 * (128 + GPU3D_WIDE_X) / 128 + 2 = 16 units a side on both, the range * (128 +
 GPU3D_WIDE_X) / 128 + 2 units), and the units' draw limit (0xfc) with the columns. The town's polygons stay under the
-DS's 2048 (at most 1717 seen in Eden on the Switch).
+DS's 2048 (at most 1717 seen in Eden on the Switch). Not on an Old 3DS (port_wide_ranges): there it cost 2-4 fps.
 ---
  src/ov003/unk_ov003_022192b4.cpp | 28 ++++++++++++++++++++++++----
- src/ov009/unk_ov009_0225b880.cpp | 16 ++++++++++++++++
- 2 files changed, 40 insertions(+), 4 deletions(-)
+ src/ov009/unk_ov009_0225b880.cpp | 14 ++++++++++++++
+ 2 files changed, 38 insertions(+), 4 deletions(-)
 
 diff --git a/src/ov003/unk_ov003_022192b4.cpp b/src/ov003/unk_ov003_022192b4.cpp
-index fc19dc3..7833b63 100644
+index fc19dc3..42e7d3c 100644
 --- a/src/ov003/unk_ov003_022192b4.cpp
 +++ b/src/ov003/unk_ov003_022192b4.cpp
 @@ -4069,6 +4069,9 @@ extern "C" void FieldObj_DrawModel(O *o, M *p, Blk m)
@@ -21,7 +21,7 @@ index fc19dc3..7833b63 100644
  namespace ns_0221cb54 {
  extern "C" {
 +#ifdef ENHANCED_PORT
-+int gpu3d_wide_wanted(void);  // (modern/host/gpu3d/gpu3d_geom.c: ACWW_WIDE)
++int port_wide_ranges(void);  // (include/port_options.h: the wide view, not on an Old 3DS)
 +#endif
  void FieldObj_DrawUnits(O *o, BlockMap *g) {
      struct {
@@ -41,7 +41,7 @@ index fc19dc3..7833b63 100644
 +#else
 +        const s32 wx = 72;  // (the 3DS's top screen, 400 x 240)
 +#endif
-+        half = gpu3d_wide_wanted() ? 9 * (128 + wx) / 128 + 2 : 9;
++        half = port_wide_ranges() ? 9 * (128 + wx) / 128 + 2 : 9;
 +        most = 0xfc * (2 * half + 1) / 19;
 +    }
 +#else
@@ -82,7 +82,7 @@ index fc19dc3..7833b63 100644
          j--;
      jtest:
 diff --git a/src/ov009/unk_ov009_0225b880.cpp b/src/ov009/unk_ov009_0225b880.cpp
-index 6093b89..5230f23 100644
+index 6093b89..941fa42 100644
 --- a/src/ov009/unk_ov009_0225b880.cpp
 +++ b/src/ov009/unk_ov009_0225b880.cpp
 @@ -406,6 +406,10 @@ void BuildingActor::setupAnims() {
@@ -90,27 +90,25 @@ index 6093b89..5230f23 100644
  }
  
 +#ifdef ENHANCED_PORT
-+extern "C" int gpu3d_wide_wanted(void);  // (modern/host/gpu3d/gpu3d_geom.c: ACWW_WIDE)
++extern "C" int port_wide_ranges(void);  // (include/port_options.h: the wide view, not on an Old 3DS)
 +#endif
 +
  s32 BuildingActor::getViewRangeX() {
      u32 v;
      BOOL in = FALSE;
-@@ -422,6 +426,18 @@ s32 BuildingActor::getViewRangeX() {
+@@ -422,6 +426,16 @@ s32 BuildingActor::getViewRangeX() {
      BuildingInfo_Copy(&t, v < 0x22 ? &data_020d0a7c[v] : &data_020d0a7c[0]);
      s32 r = BuildingInfo_GetViewRangeX(&t) << 13;
      BuildingInfo_Destroy(&t);
 +#ifdef ENHANCED_PORT
 +    // The wide view (the 3DS's 400 x 240 or the Switch's 426 x 240 around the DS's 256 x 192): the range to the sides
 +    // widened with the picture and two units more, else (isOffscreen) the buildings came in and went out inside it
-+    static int wide = -1;
-+    if (wide < 0) wide = gpu3d_wide_wanted();
 +#ifdef __SWITCH__
 +    const s32 wx = 85;  // (gpu3d.h GPU3D_WIDE_X: the Switch's 426 x 240)
 +#else
 +    const s32 wx = 72;  // (the 3DS's top screen, 400 x 240)
 +#endif
-+    if (wide) r = r * (128 + wx) / 128 + 0x4000;
++    if (port_wide_ranges()) r = r * (128 + wx) / 128 + 0x4000;
 +#endif
      return r;
  }

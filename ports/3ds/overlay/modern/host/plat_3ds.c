@@ -118,6 +118,7 @@ void host_plat_init(void) {
     APT_CheckNew3DS(&n3ds);
 #ifdef ENHANCED_PORT  // (the pictures between cost an Old 3DS about 17 ms a frame: off unless acww.cfg says)
     if (!n3ds) setenv("ACWW_PICA_INTERP", "0", 0);
+    if (!n3ds) setenv("ACWW_WIDE_RANGES", "0", 0);  // (the wide view's longer ranges: 2-4 fps on an Old 3DS)
 #endif
     osSetSpeedupEnable(true);  // (the New 3DS: 804 MHz and its L2 cache instead of 268 MHz; nothing on the others)
     fprintf(stderr, "3ds: %s, application memory %lu KB (%lu KB free), heap %lu KB, linear heap %lu KB\n",

@@ -5,13 +5,13 @@ A villager walks as seen only inside a rectangle around the camera (FieldVillage
 side, 13 back, 5 in front, the DS's picture); outside it (execOffscreen) it only steps along its route. In the wide
 view (the 3DS's 400 x 240, the Switch's 426 x 240) that rectangle ended inside the picture, and villagers there
 jumped, came in and went out. With the wide view it widens with the picture (x (128 + GPU3D_WIDE_X) / 128, z
-120/96, a unit more).
+120/96, a unit more). Not on an Old 3DS (port_wide_ranges).
 ---
  src/ov068/unk_ov068_0225f1a0.cpp | 19 +++++++++++++++++++
  1 file changed, 19 insertions(+)
 
 diff --git a/src/ov068/unk_ov068_0225f1a0.cpp b/src/ov068/unk_ov068_0225f1a0.cpp
-index 2310178..dd9ecea 100644
+index 2310178..b93cf63 100644
 --- a/src/ov068/unk_ov068_0225f1a0.cpp
 +++ b/src/ov068/unk_ov068_0225f1a0.cpp
 @@ -2204,6 +2204,10 @@ BOOL FieldVillager::updateAct() {
@@ -19,7 +19,7 @@ index 2310178..dd9ecea 100644
  }
  
 +#ifdef ENHANCED_PORT
-+extern "C" int gpu3d_wide_wanted(void);  // (modern/host/gpu3d/gpu3d_geom.c: ACWW_WIDE)
++extern "C" int port_wide_ranges(void);  // (include/port_options.h: the wide view, not on an Old 3DS)
 +#endif
 +
  FieldVillagerAi *FieldVillagerAi::initAi() {
@@ -33,7 +33,7 @@ index 2310178..dd9ecea 100644
 +    // The wide view (the 3DS's 400 x 240 or the Switch's 426 x 240 around the DS's 256 x 192): the rectangle
 +    // around the camera in which a villager walks as seen (outside it only steps along its route: execOffscreen)
 +    // widened with the picture and a unit more, else in the margins villagers jumped, came in and went out
-+    if (gpu3d_wide_wanted()) {
++    if (port_wide_ranges()) {
 +#ifdef __SWITCH__
 +        const s32 wx = 85;  // (gpu3d.h GPU3D_WIDE_X: the Switch's 426 x 240)
 +#else
