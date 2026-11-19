@@ -1,7 +1,7 @@
-From 7efa6dbbab70584d6f568270b69db4ea8bdc0730 Mon Sep 17 00:00:00 2001
+From 5548836672a6d4427a1376fdc82880c062cefcd1 Mon Sep 17 00:00:00 2001
 From: acww-3ds <noreply@invalid>
 Date: Tue, 17 Nov 2026 19:30:00 +0100
-Subject: [PATCH 5/5] 2D: an engine's layers kept when its record is the frame
+Subject: [PATCH] 2D: an engine's layers kept when its record is the frame
  before's
 
 gpu2d_draw_layers made every line state of both engines again in every frame, though in town about 97 % of the
@@ -11,12 +11,16 @@ and no BG drawn by the CPU, keeps its line states and OBJ priorities; the refere
 the sprites are made as before. ACWW_LAYERS_KEEP=0 turns it off; ACWW_LAYERS_CHECK=1 draws them anyway and counts
 the lines that differ. Azahar (ACWW_PICA_THREAD=0, the scripted run to frame 8400, both engines checked): no line
 differing; in town both engines kept in 300 of 300 frames; 2D layers 1.17 -> 0.82 ms a frame (Azahar's ms).
+
+Whether the lines are the frame before's is decided by two hashes of each engine's lines (all words but BG2X, BG2Y,
+BG3X, BG3Y and the reference points), worked out as they are recorded (record_hash), not by comparing the two
+records: that comparison cost the Old 3DS 1.8 ms a frame (old3ds-test 75's profile, "layers compared").
 ---
- modern/host/gpu2d/gpu2d.c | 85 +++++++++++++++++++++++++++++++++++++++
- 1 file changed, 85 insertions(+)
+ modern/host/gpu2d/gpu2d.c | 108 +++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 107 insertions(+), 1 deletion(-)
 
 diff --git a/modern/host/gpu2d/gpu2d.c b/modern/host/gpu2d/gpu2d.c
-index 6cfdeb7..34a7e53 100644
+index 6cfdeb7..c8121aa 100644
 --- a/modern/host/gpu2d/gpu2d.c
 +++ b/modern/host/gpu2d/gpu2d.c
 @@ -6,6 +6,7 @@
@@ -27,24 +31,70 @@ index 6cfdeb7..34a7e53 100644
  
  #include "gpu2d_internal.h"
  
-@@ -752,6 +753,8 @@ typedef struct {
+@@ -717,7 +718,16 @@ static void gpu_line_to(int n, u32 *l) {
+     if (sDeferLayers) l[G2L_PALETTE] = record_changes_so_far();  // (deferred: the changes before the line)
+     l[G2L_POWCNT] = sPowCnt;
+ }
+-static void gpu_line(int n, int line) { gpu_line_to(n, sDeferLayers ? record_line(n, line) : sGpuFrame.lines[n][line]); }
++static void record_hash(int n, const u32 *l);  // (deferred layers: below)
++static void gpu_line(int n, int line) {
++    if (!sDeferLayers) {
++        gpu_line_to(n, sGpuFrame.lines[n][line]);
++        return;
++    }
++    u32 *l = record_line(n, line);
++    gpu_line_to(n, l);
++    record_hash(n, l);
++}
+ // after an H-blank: a new version of the palettes or OAM if it changed them
+ static void gpu_versions(const Gpu2dFrameInput *in) {
+     Gpu2dGpuFrame *f = &sGpuFrame;
+@@ -752,6 +762,9 @@ typedef struct {
      int optPageY, optBtnY;
      u8 objAnchor[2][128];
      Gpu2dBgAnchor bgAnchor[2];
 +    u32 serial;  // (the frame recorded: layers_keep)
++    u32 hash[2][2];  // (each engine's lines but their reference points, two hashes: record_hash)
 +    int atOnce;  // (deferLayers 2: drawn before the next record is made)
  #endif
  } Record;
  static Record sRecord[2];
-@@ -767,6 +770,7 @@ static u32 record_changes_so_far(void) { return sRecord[sRecording].changes; }
+@@ -760,6 +773,25 @@ static u32 sShadow[0x1000 / 4];  // the palettes and OAM as recorded up to now
+ int gpu2d_record(void) { return sRecording; }
+ static u32 *record_line(int n, int line) { return sRecord[sRecording].lines[n][line]; }
+ static u32 record_changes_so_far(void) { return sRecord[sRecording].changes; }
++// The ports: each engine's lines hashed as they are recorded, all words but BG2X, BG2Y, BG3X, BG3Y and the reference
++// points (layers_keep: the lines kept from the frame before need only these the same; comparing the record's 30 KB
++// an engine with the frame before's cost an Old 3DS 1.8 ms a frame, old3ds-test 75). Two hashes, each a rotate and an
++// add (the ARM's shifted operand: three instructions a word; FNV-1a's multiply became five), whose carries keep the
++// same change on many lines from cancelling out; a collision needs both.
++static void record_hash(int n, const u32 *l) {
++#ifdef ENHANCED_PORT
++    u32 *h = sRecord[sRecording].hash[n], a = h[0], b = h[1];
++#define RH(k) (a = (a ^ l[k]) + (a << 5 | a >> 27), b = (b << 5 | b >> 27) + l[k])
++    for (int k = 0; k < 10; k++) RH(k);
++    RH(12), RH(13);
++    for (int k = 16; k < G2L_REF; k++) RH(k);
++    for (int k = G2L_REF + 4; k < GPU2D_LINE_WORDS; k++) RH(k);
++#undef RH
++    h[0] = a, h[1] = b;
++#else
++    (void)n, (void)l;
++#endif
++}
+ 
+ #ifdef ENHANCED_PORT
+ #include "gpu2d_direct.h"
+@@ -767,6 +799,8 @@ static u32 record_changes_so_far(void) { return sRecord[sRecording].changes; }
  static void record_start(const Gpu2dFrameInput *in) {
      Record *r = &sRecord[sRecording ^= 1];
  #ifdef ENHANCED_PORT
 +    r->serial = sFrame, r->atOnce = in->deferLayers == 2;
++    r->hash[0][0] = r->hash[1][0] = 2166136261u, r->hash[0][1] = r->hash[1][1] = 0;
      memcpy(r->margin, sMargin, sizeof r->margin);
      sMargin[0].bg = sMargin[1].bg = 0;
      r->iris = sIris;
-@@ -849,6 +853,44 @@ static void record_end(const Gpu2dFrameInput *in) {
+@@ -849,6 +883,35 @@ static void record_end(const Gpu2dFrameInput *in) {
      r->topEngine = top_engine();
  }
  
@@ -63,16 +113,7 @@ index 6cfdeb7..34a7e53 100644
 +    if (!r->atOnce || p->serial != sKeepDrawn || !sLayers->sprite || sCpuBg[n] || r->changes != p->changes ||
 +        r->start[0x100 * n] != p->start[0x100 * n] || memcmp(r->change, p->change, r->changes * sizeof r->change[0]))
 +        return 0;
-+    for (int y = 0; y < SCREEN_H; y++) {
-+        const u32 *a = r->lines[n][y], *b = p->lines[n][y];
-+        if (!memcmp(a, b, GPU2D_LINE_WORDS * sizeof *a)) continue;
-+        u32 d = (a[12] ^ b[12]) | (a[13] ^ b[13]);  // (all but BG2X, BG2Y, BG3X, BG3Y and the reference points)
-+        for (int k = 0; k < 10; k++) d |= a[k] ^ b[k];
-+        for (int k = 16; k < G2L_REF; k++) d |= a[k] ^ b[k];
-+        for (int k = G2L_REF + 4; k < GPU2D_LINE_WORDS; k++) d |= a[k] ^ b[k];
-+        if (d) return 0;
-+    }
-+    return 1;
++    return r->hash[n][0] == p->hash[n][0] && r->hash[n][1] == p->hash[n][1];  // (the lines: record_hash)
 +}
 +// whether a BG of engine n was drawn by the CPU (render_line, layers_line), from the lines just drawn
 +static int cpu_bg(const Record *r, int n) {
@@ -89,7 +130,7 @@ index 6cfdeb7..34a7e53 100644
  void gpu2d_draw_layers(int record) {
      static Engine draw[2];  // (the drawing thread's: the state from the record line by line)
      static u32 work[0x1000 / 4];  // the palettes, then OAM, as at the line drawn
-@@ -878,11 +920,34 @@ void gpu2d_draw_layers(int record) {
+@@ -878,11 +941,34 @@ void gpu2d_draw_layers(int record) {
      for (int n = 0; n < 2; n++) draw[n].objAnchor = r->objAnchor[n];
  #endif
      int ax = 0, ay = 0, rowH = 0;  // (the sprite atlas, filled at line 0)
@@ -124,7 +165,7 @@ index 6cfdeb7..34a7e53 100644
              for (int k = 0; k < REG_SIZE / 4; k++) memcpy(d->regs + 4 * k, &l[G2L_REGS + k], 4);
              for (int i = 0; i < 2; i++) d->refX[i] = (s32)l[G2L_REF + 2 * i], d->refY[i] = (s32)l[G2L_REF + 2 * i + 1];
              d->refLine = line;
-@@ -897,9 +962,29 @@ void gpu2d_draw_layers(int record) {
+@@ -897,9 +983,29 @@ void gpu2d_draw_layers(int record) {
              else if (line == 0 && r->haveObj0[n]) d->obj = r->obj0[n];
              else if (line == 0) memset(&d->obj, 0, sizeof d->obj);
              else gpu2d_render_obj_line(d, line, &d->obj);
