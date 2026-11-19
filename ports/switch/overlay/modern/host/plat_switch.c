@@ -10,6 +10,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <arpa/inet.h>
+
 #include <switch.h>
 #include <sys/iosupport.h>
 
@@ -64,6 +66,8 @@ void host_plat_log_write(void) {
 void host_plat_init(void) {
     mutexInit(&sLogLock);
     mutexInit(&sLogFileLock);
+    remove(DIR "log.prev.txt");  // (the last run's log kept: a test's own is often the one before a new start)
+    rename(DIR "log.txt", DIR "log.prev.txt");
     sLogFile = fopen(DIR "log.txt", "w");
     devoptab_list[STD_OUT] = devoptab_list[STD_ERR] = &sLogDevice;
     setvbuf(stdout, 0, _IONBF, 0);
@@ -83,6 +87,21 @@ void host_plat_init(void) {
         setenv(line, eq + 1, 1);
     }
     if (f) fclose(f);
+    // local wireless (wm7.c): the game tells the players apart by their MAC address, which the PC build makes from
+    // the machine's name and the save file's path - the same on every console. The console's own one instead, made
+    // from its serial number (the same on every start); ACWW_MAC=xx:xx:xx:xx:xx:xx in acww.cfg sets it
+    if (!getenv("ACWW_MAC") && R_SUCCEEDED(setsysInitialize())) {
+        SetSysSerialNumber sn = {0};
+        if (R_SUCCEEDED(setsysGetSerialNumber(&sn)) && sn.number[0]) {
+            u32 h = 2166136261u;  // (FNV-1a, as wm7.c's)
+            for (const char *c = sn.number; c < sn.number + sizeof sn.number && *c; c++) h = (h ^ (u8)*c) * 16777619u;
+            char mac[18];  // (Nintendo's prefix, as wm7.c's own)
+            snprintf(mac, sizeof mac, "00:09:bf:%02x:%02x:%02x", (unsigned)(h >> 16) & 0xff, (unsigned)(h >> 8) & 0xff,
+                     (unsigned)h & 0xff);
+            setenv("ACWW_MAC", mac, 1);
+        }
+        setsysExit();
+    }
     // the game's files: the web builder's data pack, or the ROM image itself
     f = fopen(DIR "game.pak", "rb");
     if (f) fclose(f);
@@ -117,6 +136,47 @@ int host_plat_localtime(struct tm *out) {
 
 // shortcut: no restart in place on the Switch yet; the caller reports it and the program ends (back to the menu)
 void host_plat_restart(char **argv) { (void)argv; }
+
+// Local wireless (wm7.c): the DS's radio is UDP on the console's own internet connection (the one set in System
+// Settings). The socket service starts when the game first turns its wireless on (the gate), not at start-up.
+// 0: it couldn't (the reason in the log), and the game finds nobody.
+int port_net_start(void) {
+    static int state;  // 0 not tried, 1 on, -1 failed
+    if (state) return state > 0;
+    state = -1;
+    Result r = socketInitializeDefault();
+    if (R_FAILED(r)) {
+        fprintf(stderr, "switch: no socket service (%08x): no wireless\n", (unsigned)r);
+        return 0;
+    }
+    atexit(socketExit);
+    state = 1;
+    long ip = gethostid();  // (network order; 0 or 127.0.0.1: the console isn't connected to a network)
+    if (!ip || ip == (long)htonl(INADDR_LOOPBACK))
+        fprintf(stderr, "switch: wireless on, but no network connection: nobody to find\n");
+    else
+        fprintf(stderr, "switch: wireless on, this console is %s on its network\n",
+                inet_ntoa((struct in_addr){.s_addr = (u32)ip}));
+    return 1;
+}
+
+// The network's own broadcast address (network order; 0: none), asked again at most once a second (the connection
+// can change): wm7.c sends its beacons there as well as to 255.255.255.255.
+u32 port_net_broadcast(void) {
+    static u32 addr;
+    static u64 asked;
+    u64 now = host_plat_time_ns();
+    if (!asked || now - asked > 1000000000ull) {
+        u32 ip = 0, mask = 0, gw = 0, dns1 = 0, dns2 = 0;
+        addr = 0;
+        if (R_SUCCEEDED(nifmInitialize(NifmServiceType_User))) {
+            if (R_SUCCEEDED(nifmGetCurrentIpConfigInfo(&ip, &mask, &gw, &dns1, &dns2)) && ip) addr = (ip & mask) | ~mask;
+            nifmExit();
+        }
+        asked = now;
+    }
+    return addr;
+}
 
 struct Start { void (*fn)(void *); void *arg; Thread t; };
 static void thread_main(void *p) {

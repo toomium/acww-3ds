@@ -1,0 +1,227 @@
+From: acww-3ds <noreply@invalid>
+Subject: [PATCH] Wireless: MP data resent until the other side acknowledges it
+
+On a real Wi-Fi network a datagram is lost now and then (about 1.5% of the MP answers between the user's Switch and
+New 3DS). The DS's radio resends MP data until it is acknowledged, and the game counts on that: ov066 gets over one
+lost frame, but a lost acknowledgement left the parent waiting for it; the child's data stopped and after about 45 s
+the game ended the visit ("communication has ended"). wm7 now does what the radio does: the data on its way carries
+a number and goes again in every MP frame / answer until the other side's datagrams carry that number back; repeats
+are told apart by the number. The datagrams' version goes from 1 to 2 (copies without this don't see each other).
+---
+ modern/host/wm7.c | 97 +++++++++++++++++++++++++++++++++++++++++-------------------
+ 1 file changed, 67 insertions(+), 30 deletions(-)
+
+diff --git a/modern/host/wm7.c b/modern/host/wm7.c
+--- a/modern/host/wm7.c
++++ b/modern/host/wm7.c
+@@ -6,9 +6,9 @@
+ // child connected, MP sequences, received data) in buffers of its own. This file is that ARM7 side. What the radio
+ // carries goes in UDP datagrams instead: a parent's beacons to every copy on the machine and the LAN (and to the
+ // addresses that asked for them), the connection handshake, and the MP exchange - each MP sequence the parent sends
+-// one frame to its children and each child answers with the data it has set, as the DS's hardware does. The ARM9's
+-// layers above (the game's ov066 and ov067, the SDK's data sharing) keep their own sequence numbers, acknowledgements
+-// and resends, so a datagram lost or late only slows them.
++// one frame to its children and each child answers with the data it has set, as the DS's hardware does. As the
++// hardware, it resends data until the other side acknowledges it (sCur): the game's ov066 keeps numbers of its own
++// but gets over only one lost frame, and a lost acknowledgement stopped it for good.
+ //
+ // Addresses: every copy binds the first free UDP port of 31470-31477 (ACWW_NET_PORT: another one) and sends its
+ // beacons to all eight ports, on the broadcast address and on the loopback address. ACWW_NET_PEER=host[:port][,...]:
+@@ -144,6 +144,7 @@
+     u64 seen;
+     struct { u16 port, length; u8 data[0x200]; } reply[4];  // received, for the next MP sequences
+     int replyHead, replyCount;
++    u16 rxSeq;  // the number of the child's data last taken (its acknowledgement, and repeats told apart)
+ } sChild[16];  // by aid (1-15)
+ 
+ // child
+@@ -161,7 +162,9 @@
+ static u16 sMyAid;
+ static WMMsg *sConnectMsg;     // the StartConnect request until it's answered
+ static u64 sConnectRetry, sConnectGiveUp;
+-static struct MpFrame { u32 seq; u16 port, dest, length; u8 data[0x200]; } sMpIn[8];  // the parent's frames received
++// the parent's frames received
++static struct MpFrame { u32 seq; u16 port, dest, length, dataSeq, ack; u8 data[0x200]; } sMpIn[8];
++static u16 sRxSeq;  // the number of the parent's data last taken
+ static int sMpInHead, sMpInCount;
+ static u64 sNextAlive;
+ 
+@@ -179,6 +182,13 @@
+ static u32 sSeq;
+ static struct Send { WMMsg *m; void *data; u16 size, dest, port, prio; void *cb, *arg; } sSend[16];
+ static int sSendCount;
++// The data on its way (the DS's radio resends it until it is acknowledged, and the game counts on that: a datagram
++// lost left the game waiting for its acknowledgement until it gave up, on a real Wi-Fi network): it goes in every MP
++// frame (the parent's, to the children not yet acknowledging it) or answer (the child's) with its number, until
++// the other side's datagrams carry that number back.
++static struct Send sCur;
++static int sHaveCur;
++static u16 sCurSeq, sCurAcked;  // its number; the parent: the children that acknowledged it
+ 
+ // ---- network
+ static sock_t sSock = BAD_SOCK;
+@@ -268,7 +278,7 @@
+ static u8 sPk[HDR + 32 + 0x220];
+ static u8 *packet(u32 type, const u8 *to) {
+     memcpy(sPk, "ACWL", 4);
+-    sPk[4] = 1;
++    sPk[4] = 2;  // (1: MP data without numbers, never resent)
+     sPk[5] = (u8)type;
+     memcpy(sPk + 6, sMac, 6);
+     if (to) memcpy(sPk + 12, to, 6);
+@@ -431,9 +441,17 @@
+     sMp = 0;
+     sMpInCount = 0;
+     if (sSt) sSt->f0c = 0;
++    if (sHaveCur) finish_send(&sCur, sCurAcked & sCur.dest);
++    sHaveCur = 0;
+     flush_sends();
+ }
+ 
++// the data on its way, or the next one (a new number) once it is through
++static int take_cur(void) {
++    if (!sHaveCur && take_send(&sCur)) sHaveCur = 1, sCurSeq++, sCurAcked = 0;
++    return sHaveCur;
++}
++
+ // an MP sequence of the parent: the children's answers to the last one, the next frame out, MPEND_IND
+ static void parent_mp(void) {
+     sSeq++;
+@@ -445,22 +463,26 @@
+         c->replyHead = (c->replyHead + 1) % 4;
+         c->replyCount--;
+     }
+-    struct Send s;
+-    int have = take_send(&s);
+     u16 children = connected_mask();
++    if (sHaveCur && !(sCur.dest & children & ~sCurAcked)) {  // through to every child it was for (still there)
++        finish_send(&sCur, sCur.dest & sCurAcked);
++        sHaveCur = 0;
++    }
++    int have = take_cur();
+     for (int aid = 1; aid < 16; aid++) {
+         if (!(children & 1 << aid)) continue;
+-        int with = have && (s.dest & 1 << aid);
++        int with = have && (sCur.dest & ~sCurAcked & 1 << aid);
+         u8 *p = packet(PK_MP, sChild[aid].mac);
+         put32(p, sSeq);
+-        put16(p + 4, with ? s.port : 0xffff);
+-        put16(p + 6, have ? s.dest : 0);
+-        put16(p + 8, with ? s.size : 0);
+-        if (with) memcpy(p + 10, s.data, s.size);
+-        send_to(&sChild[aid].addr, 10u + (with ? s.size : 0));
++        put16(p + 4, with ? sCur.port : 0xffff);
++        put16(p + 6, have ? sCur.dest : 0);
++        put16(p + 8, with ? sCur.size : 0);
++        put16(p + 10, sCurSeq);
++        put16(p + 12, sChild[aid].rxSeq);
++        if (with) memcpy(p + 14, sCur.data, sCur.size);
++        send_to(&sChild[aid].addr, 14u + (with ? sCur.size : 0));
+         sStat[ST_FRAMES_OUT]++;
+     }
+-    if (have) finish_send(&s, s.dest & children);
+     mp_event(SC_MPEND_IND);
+ }
+ 
+@@ -487,19 +509,28 @@
+ // a frame of the parent's: its data, MP_IND, the answer (the data set before), MPACK_IND
+ static void child_mp(struct MpFrame *f) {
+     sSeq = f->seq;
+-    if (f->length && (f->dest & 1 << sMyAid)) port_recv(f->port, 0, sJoined.mac, f->data, f->length);
++    // shortcut: a repeat is told apart only from the data taken last (a resend late enough to come after the next
++    // data would be taken again); compare the numbers by age if datagrams out of order ever show up
++    if (f->length && (f->dest & 1 << sMyAid) && f->dataSeq != sRxSeq) {
++        sRxSeq = f->dataSeq;
++        port_recv(f->port, 0, sJoined.mac, f->data, f->length);
++    }
+     mp_event(SC_MP_IND);
+-    struct Send s;
+-    int have = take_send(&s);
++    if (sHaveCur && f->ack == sCurSeq) {
++        finish_send(&sCur, 1);
++        sHaveCur = 0;
++    }
++    int have = take_cur();
+     u8 *p = packet(PK_REPLY, sJoined.mac);
+     put32(p, f->seq);
+     put16(p + 4, sMyAid);
+-    put16(p + 6, have ? s.port : 0xffff);
+-    put16(p + 8, have ? s.size : 0);
+-    if (have) memcpy(p + 10, s.data, s.size);
+-    send_to(&sJoined.addr, 10u + (have ? s.size : 0));
++    put16(p + 6, have ? sCur.port : 0xffff);
++    put16(p + 8, have ? sCur.size : 0);
++    put16(p + 10, sCurSeq);
++    put16(p + 12, sRxSeq);
++    if (have) memcpy(p + 14, sCur.data, sCur.size);
++    send_to(&sJoined.addr, 14u + (have ? sCur.size : 0));
+     sStat[ST_ANSWERS_OUT]++;
+-    if (have) finish_send(&s, 1);
+     mp_event(SC_MPACK_IND);
+ }
+ 
+@@ -628,7 +659,7 @@
+ static int same_mac(const u8 *a, const u8 *b) { return !memcmp(a, b, 6); }
+ 
+ static void receive(const u8 *pk, int n, const struct sockaddr_in *from) {
+-    if (n < HDR || memcmp(pk, "ACWL", 4) || pk[4] != 1) return;
++    if (n < HDR || memcmp(pk, "ACWL", 4) || pk[4] != 2) return;
+     const u8 *src = pk + 6, *dst = pk + 12, *p = pk + HDR;
+     int len = n - HDR;
+     static const u8 kAll[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+@@ -724,7 +755,7 @@
+         else if (child && same_mac(src, sJoined.mac)) child_lost(1);
+         break;
+     case PK_MP:
+-        if (!child || !same_mac(src, sJoined.mac) || len < 10) return;
++        if (!child || !same_mac(src, sJoined.mac) || len < 14) return;
+         sJoined.seen = now;
+         if (sState != ST_MP_CHILD || sMpInCount == 8) return;
+         {
+@@ -733,26 +764,32 @@
+             f->port = get16(p + 4);
+             f->dest = get16(p + 6);
+             f->length = get16(p + 8);
+-            if (f->length > 0x200 || len < 10 + f->length) return;
+-            memcpy(f->data, p + 10, f->length);
++            f->dataSeq = get16(p + 10);
++            f->ack = get16(p + 12);
++            if (f->length > 0x200 || len < 14 + f->length) return;
++            memcpy(f->data, p + 14, f->length);
+             sMpInCount++;
+             sStat[ST_FRAMES_IN]++;
+         }
+         break;
+     case PK_REPLY:
+-        if (!aid || len < 10) return;
++        if (!aid || len < 14) return;
+         sStat[ST_ANSWERS_IN]++;
+         sChild[aid].seen = now;
+         sChild[aid].addr = *from;
+         {
+-            u16 port = get16(p + 6), length = get16(p + 8);
++            u16 port = get16(p + 6), length = get16(p + 8), seq = get16(p + 10);
+             struct Child *c = &sChild[aid];
+-            if (port == 0xffff || length == 0 || length > 0x200 || len < 10 + length || c->replyCount == 4 || !sMp)
++            if (sHaveCur && get16(p + 12) == sCurSeq) sCurAcked |= (u16)(1 << aid);
++            // (a full queue: not taken, so not acknowledged, and the child sends it again)
++            if (port == 0xffff || length == 0 || length > 0x200 || len < 14 + length || seq == c->rxSeq ||
++                c->replyCount == 4 || !sMp)
+                 return;
++            c->rxSeq = seq;
+             int i = (c->replyHead + c->replyCount++) % 4;
+             c->reply[i].port = port;
+             c->reply[i].length = length;
+-            memcpy(c->reply[i].data, p + 10, length);
++            memcpy(c->reply[i].data, p + 14, length);
+         }
+         break;
+     case PK_ALIVE:
+@@ -895,6 +932,7 @@
+         sMp = 1;
+         sSeq = 0;
+         sMpInCount = 0;
++        sCurSeq = sRxSeq = 0;
+         sMpPeriod = FRAME_CYCLES / (freq ? (freq > 16 ? 16 : freq) : 4);
+         sNextMp = host_cycles() + sMpPeriod;
+         if (sSt) sSt->f0c = 1;

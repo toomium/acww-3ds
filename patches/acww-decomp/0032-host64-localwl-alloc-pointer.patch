@@ -1,0 +1,64 @@
+From: acww-3ds <noreply@invalid>
+Subject: [PATCH] 64-bit: LocalWl_Alloc returns a pointer, not an s32 (the crash opening the gate on a Switch)
+
+ov066's LocalWl_Alloc returned the net heap's block as an s32 and called its allocator hook through an s32-returning
+cast. On a real Switch the heap is at 0xc4xxxxxx, above 2 GB: aarch64 sign-extended the s32 to 0xffffffffc4xxxxxx and
+LocalWl_InitWm's first write through it was a data abort (Atmosphère crash report: PC LocalWl_InitWm, fault address
+0xffffffffc4217ce4) as soon as the gate was opened. Eden and the PC builds keep the heap lower, and x86-64 passes the
+whole return register through, so neither showed it (ACWW_HIGHMEM doesn't catch it either).
+- LocalWl_Alloc returns void * and calls the hook with its own type (the cast macro over sLocalWlAllocHook removed).
+- The prototype in include/proto changed with it.
+The DS's behaviour is unchanged: a failed allocation still sets error 0x42 and gives NULL.
+---
+diff --git a/include/proto/ov066/unk_ov066_0225f1a0.h b/include/proto/ov066/unk_ov066_0225f1a0.h
+--- a/include/proto/ov066/unk_ov066_0225f1a0.h
++++ b/include/proto/ov066/unk_ov066_0225f1a0.h
+@@ -462,7 +462,7 @@ void LocalWl_OnReset(WMMsg *m);
+ void LocalWl_ClearResetFlag(void);
+ #endif
+ #ifndef PROTO_LOCAL_LocalWl_Alloc
+-s32 LocalWl_Alloc(s32 a, s32 b);
++void *LocalWl_Alloc(s32 a, s32 b);
+ #endif
+ #ifndef PROTO_LOCAL_LocalWl_Free
+ void LocalWl_Free(void *p);
+diff --git a/src/ov066/unk_ov066_0225f1a0.cpp b/src/ov066/unk_ov066_0225f1a0.cpp
+--- a/src/ov066/unk_ov066_0225f1a0.cpp
++++ b/src/ov066/unk_ov066_0225f1a0.cpp
+@@ -2665,7 +2665,6 @@ void LocalWl_StepParentWaiting(void) {
+ #undef LocalWl_Alloc
+ 
+ // ---- unk_ov066_0225f1a0
+-#define sLocalWlAllocHook (*(s32 (**)(s32, s32))&sLocalWlAllocHook)
+ 
+ void LocalWl_StepScanning(void) {
+     switch (sLocalWl->requestedMode) {
+@@ -2979,15 +2978,16 @@ void LocalWl_ClearResetFlag(void) {
+     sLocalWl->flags &= ~0x400;
+ }
+ 
+-s32 LocalWl_Alloc(s32 a, s32 b) {
++// (a pointer, not the DS's s32: an s32 sign-extends an address above 2 GB, as the Switch's heap is)
++void *LocalWl_Alloc(s32 a, s32 b) {
+     if (sLocalWlAllocHook != NULL) {
+-        s32 r = sLocalWlAllocHook(a, b);
+-        if (r != 0) {
++        void *r = sLocalWlAllocHook(a, b);
++        if (r != NULL) {
+             return r;
+         }
+     }
+     LocalWl_SetError(0x42);
+-    return 0;
++    return NULL;
+ }
+ 
+ void LocalWl_Free(void *p) {
+@@ -3033,7 +3033,6 @@ s32 LocalWl_SetEventCallback(void (*fn)(void *)) {
+     }
+     return FALSE;
+ }
+-#undef sLocalWlAllocHook
+ 
+ }
+ #pragma thumb reset

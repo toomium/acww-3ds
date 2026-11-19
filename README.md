@@ -48,7 +48,7 @@ input and system parts.
 | ✅ Works | 🛠️ Work in progress | 💭 Future wishlist |
 | :--- | :--- | :--- |
 | Playable on a New 3DS and in Azahar: the town, the houses, the menus, saving | The Old 3DS: it runs, slower than the game should (see below) | Stereoscopic 3D |
-| Playable on a Switch (Atmosphère) at 60 frames a second, docked or handheld; in the web builder and the releases | | Wireless play |
+| Playable on a Switch (Atmosphère) at 60 frames a second, docked or handheld; in the web builder and the releases | [Visiting another town](#visiting-another-town), 3DS and Switch together: works in Azahar and Eden; on the consoles being tested | Nintendo Wi-Fi Connection |
 | Wide screens, the options page, the analog stick | 60 frames a second everywhere on the 3DS; a HOME Menu version (`.cia`: the web builder puts the icon from your ROM on it; the banner is a placeholder) | |
 | Sound, the save file, the touch screen | Languages other than German tested | |
 
@@ -133,7 +133,8 @@ doesn't have do more:
 | The touch screen | handheld: touches where the game's touch screen is shown |
 
 The port writes a log, `log.txt`, beside the program: send it along when you
-report a problem (its first line names the port's version).
+report a problem (its first line names the port's version). The run before is
+kept as `log.prev.txt`.
 
 The options page writes `acww.cfg` beside the program, a file of `NAME=value`
 lines that can also be edited by hand:
@@ -154,6 +155,28 @@ lines that can also be edited by hand:
 
 Stacked fruit uses item codes the DS game doesn't have: a save with stacks in
 it belongs to this port.
+
+### Visiting another town
+
+The DS's local wireless play (the gate: inviting a friend or visiting their
+town) goes over the console's own internet connection, and a 3DS and a Switch
+can visit each other. The consoles must be connected to the same network in
+System Settings and run the same version of the port. The radio's traffic is
+UDP on ports 31470-31477; each console finds the others on the network by
+itself. As on the DS, the gate opens only after Nook's part-time job.
+
+| Option | Default | Meaning |
+| :--- | :--- | :--- |
+| `ACWW_NET_PEER` | | `host[:port]`: the host's address, if the host's town isn't found by itself (another network: the host's port, 31470 by default, forwarded to it) |
+| `ACWW_NET_LAN` | `1` | `0`: no beacons on the local network, only to `ACWW_NET_PEER` |
+| `ACWW_MAC` | the console's | `xx:xx:xx:xx:xx:xx`: how the game tells the players apart; made from the console's ID or serial number, so set it in one of two emulator windows that share one |
+| `ACWW_NET_PORT` | | a fixed UDP port instead of the first free one of 31470-31477; two emulators on one computer: `31471` in one of them |
+| `ACWW_WM_LOG` | `0` | `1`: the wireless traffic in `log.txt` once a second, `2`: every packet |
+
+If the connection breaks, the game resets as on the DS, which on the consoles
+ends the program (back to the Homebrew Launcher or the menu; the save is
+written first). Nintendo Wi-Fi Connection (playing over the internet through
+Nintendo's servers, which are gone) isn't supported.
 
 > [!TIP]
 > **Need help?** Open an issue, and include your console or emulator and
@@ -250,8 +273,8 @@ build/             everything fetched and built; never committed
   stick; stacked fruit; languages from the European version; the Switch's one
   screen at 720p and 60 frames a second.
 - **Work in progress:** the Old 3DS's speed, 60 frames a second everywhere on
-  the 3DS.
-- **Future wishlist:** stereoscopic 3D, wireless play.
+  the 3DS; visiting another town, 3DS and Switch together.
+- **Future wishlist:** stereoscopic 3D, Nintendo Wi-Fi Connection.
 
 ### Contributing
 

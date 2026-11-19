@@ -10,6 +10,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <arpa/inet.h>
+
 #include <3ds.h>
 #include <sys/iosupport.h>
 
@@ -65,6 +67,8 @@ void host_plat_log_write(void) {
 // The options: there is no environment on the 3DS, so acww.cfg's `NAME=value` lines (`#` comments) become one, and
 // every ACWW_* option of docs/host.md works unchanged. stdout and stderr go to log.txt.
 void host_plat_init(void) {
+    remove(DIR "log.prev.txt");  // (the last run's log kept: a test's own is often the one before a new start)
+    rename(DIR "log.txt", DIR "log.prev.txt");
 #ifdef ENHANCED_PORT  // (the enhanced port: written out by a thread of its own, hw.c log_writer)
     LightLock_Init(&sLogLock);
     LightLock_Init(&sLogFileLock);
@@ -107,6 +111,20 @@ void host_plat_init(void) {
         setenv(line, eq + 1, 1);
     }
     if (f) fclose(f);
+    // local wireless (wm7.c): the game tells the players apart by their MAC address, which the PC build makes from
+    // the machine's name and the save file's path - the same on every console. A console's own one instead, made
+    // from its unique ID (CFGU_GenHashConsoleUnique: the same on every start, a different one on each console);
+    // ACWW_MAC=xx:xx:xx:xx:xx:xx in acww.cfg sets it (two Azahar windows with the same console ID need that)
+    if (!getenv("ACWW_MAC") && R_SUCCEEDED(cfguInit())) {
+        u64 id = 0;
+        if (R_SUCCEEDED(CFGU_GenHashConsoleUnique(0xacc0, &id)) && id) {
+            char mac[18];  // (Nintendo's prefix, as wm7.c's own)
+            snprintf(mac, sizeof mac, "00:09:bf:%02x:%02x:%02x", (unsigned)(id >> 16) & 0xff,
+                     (unsigned)(id >> 8) & 0xff, (unsigned)id & 0xff);
+            setenv("ACWW_MAC", mac, 1);
+        }
+        cfguExit();
+    }
     // the game's files: the web builder's data pack, or (as before it) the ROM image itself
     f = fopen(DIR "game.pak", "rb");
     if (f) fclose(f);
@@ -188,6 +206,45 @@ int host_plat_localtime(struct tm *out) {
 
 // shortcut: no restart in place on the 3DS; the caller reports it and the program ends (back to the launcher)
 void host_plat_restart(char **argv) { (void)argv; }
+
+// Local wireless (wm7.c): the DS's radio is UDP on the console's own Wi-Fi connection (the one set in System
+// Settings). The socket service starts when the game first turns its wireless on (the gate), not at start-up: it
+// takes SOC_BUF of the heap for good. 0: it couldn't (the reason in the log), and the game finds nobody.
+#define SOC_BUF 0x40000
+int port_net_start(void) {
+    static int state;  // 0 not tried, 1 on, -1 failed
+    if (state) return state > 0;
+    state = -1;
+    u32 *buf = memalign(0x1000, SOC_BUF);
+    Result r = buf ? socInit(buf, SOC_BUF) : -1;
+    if (R_FAILED(r)) {
+        fprintf(stderr, "3ds: no socket service (socInit %08lx): no wireless\n", (unsigned long)r);
+        free(buf);
+        return 0;
+    }
+    atexit((void (*)(void))socExit);
+    state = 1;
+    long ip = gethostid();  // (network order; 0: the console isn't connected to a Wi-Fi network)
+    if (!ip) fprintf(stderr, "3ds: wireless on, but no Wi-Fi connection: nobody to find\n");
+    else fprintf(stderr, "3ds: wireless on, this console is %s on its Wi-Fi network\n",
+                 inet_ntoa((struct in_addr){.s_addr = (u32)ip}));
+    return 1;
+}
+
+// The Wi-Fi network's own broadcast address (network order; 0: none), asked again at most once a second (the
+// connection can change): wm7.c sends its beacons there as well as to 255.255.255.255, which not every network
+// passes on from a 3DS.
+u32 port_net_broadcast(void) {
+    static u32 addr;
+    static u64 asked;
+    u64 now = host_plat_time_ns();
+    if (!asked || now - asked > 1000000000ull) {
+        struct in_addr ip = {0}, mask = {0}, bcast = {0};
+        addr = SOCU_GetIPInfo(&ip, &mask, &bcast) == 0 && ip.s_addr ? bcast.s_addr : 0;
+        asked = now;
+    }
+    return addr;
+}
 
 struct Start { void (*fn)(void *); void *arg; };
 static void thread_main(void *p) {
