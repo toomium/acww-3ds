@@ -1,0 +1,110 @@
+From 4a72d2f57c1c65e82bbd8a5bb0771ca96a1bd04e Mon Sep 17 00:00:00 2001
+From: acww-3ds <noreply@invalid>
+Date: Tue, 17 Nov 2026 12:14:19 +0100
+Subject: [PATCH 3/5] 2D: the sprite atlas keeps the OBJs that didn't change
+ (ENHANCED_PORT)
+
+gpu2d_obj_sprites decoded every shown OBJ into the atlas every frame. Now an OBJ at the same place in the atlas as
+in the frame before, with the same hash (its tile bytes, the palette, the attributes without its place on the
+screen and its priority), keeps its pixels: only the hash is worked out. Gpu2dSprite.hash is that hash (the place
+is in the sprite itself for screen_unchanged). ACWW_SPRITE_CHECK=1 makes each kept OBJ again aside and counts the
+ones that differ.
+---
+ modern/host/gpu2d/gpu2d_obj.c | 48 +++++++++++++++++++++++++++++++++--
+ 1 file changed, 46 insertions(+), 2 deletions(-)
+
+diff --git a/modern/host/gpu2d/gpu2d_obj.c b/modern/host/gpu2d/gpu2d_obj.c
+index 60a0a3d..1c7eb08 100644
+--- a/modern/host/gpu2d/gpu2d_obj.c
++++ b/modern/host/gpu2d/gpu2d_obj.c
+@@ -9,6 +9,7 @@
+ // (numerically lower), so at equal priority the lower entry is in front.
+ 
+ #include <stdio.h>
++#include <stdlib.h>
+ 
+ #include "gpu2d_internal.h"
+ 
+@@ -136,7 +137,7 @@ static u32 sprite_tiles(const Engine *e, u32 dispcnt, u16 a0, u16 a1, u16 a2, s3
+     int color256 = a0 & 0x2000, bytes = color256 ? 64 : 32;
+     u32 tile = a2 & 0x3ffu, palBase = color256 ? 0 : (a2 >> 12) * 16u;
+     for (s32 py = 0; py < h; py++) {
+-        u32 *d = dst + py * GPU2D_ATLAS_W;
++        u32 *d = dst ? dst + py * GPU2D_ATLAS_W : 0;
+         u32 v = (u32)((a1 & 0x2000) ? h - 1 - py : py);
+         for (s32 tx = 0; tx < w / 8; tx++) {
+             u32 addr = dispcnt & 0x10 ? tile * (32u << (dispcnt >> 20 & 3)) + (v / 8 * (u32)(w / 8) + (u32)tx) * bytes
+@@ -148,6 +149,7 @@ static u32 sprite_tiles(const Engine *e, u32 dispcnt, u16 a0, u16 a1, u16 a2, s3
+                 memcpy(&word, p + k, 4);
+                 hash = (hash ^ word) * 16777619u;
+             }
++            if (!dst) continue;  // (the hash only: gpu2d_obj_sprites' kept pixels)
+             for (int k = 0; k < 8; k++) {
+                 u32 idx = color256 ? p[k] : (p[k / 2] >> (4 * (k & 1)) & 15);
+                 s32 u = tx * 8 + k;
+@@ -158,9 +160,34 @@ static u32 sprite_tiles(const Engine *e, u32 dispcnt, u16 a0, u16 a1, u16 a2, s3
+     return hash;
+ }
+ 
++#ifdef ENHANCED_PORT
++// The atlas's OBJs of the frame before: an OBJ at the same place in the atlas, its hash (the tile bytes, the palette,
++// the attributes but its place on the screen and its priority) the same, has its pixels there still; only the hash
++// is worked out, not the pixels (most OBJs in town stay the same from frame to frame). Per engine and sprite number;
++// only an entry made or found in the frame before counts (in a frame between, another OBJ may have had its place).
++static struct { const u32 *atlas; u32 key, frame; s32 u, v, w, h; } sKept[2][128];
++static u32 sKeptFrame;
++// ACWW_SPRITE_CHECK=1: each kept OBJ made again aside and compared with the atlas; the OBJs that differ, every 300
++// frames in the log (0 expected)
++static int sKeptCheck = -1;
++static u32 sKeptChecked, sKeptDiffer, sKeptHits, sKeptMade;
++static u32 sKeptScratch[64 * GPU2D_ATLAS_W];
++static void kept_check(const Engine *e, u32 dispcnt, u16 a0, u16 a1, u16 a2, s32 w, s32 h, const u32 *pal, const u32 *at) {
++    sprite_tiles(e, dispcnt, a0, a1, a2, w, h, pal, sKeptScratch, 0);
++    sKeptChecked++;
++    for (s32 y = 0; y < h; y++)
++        if (memcmp(sKeptScratch + y * GPU2D_ATLAS_W, at + y * GPU2D_ATLAS_W, (size_t)w * 4)) { sKeptDiffer++; break; }
++}
++#endif
+ int gpu2d_obj_sprites(const Engine *e, struct Gpu2dSprite *out, u32 *atlas, int *ax, int *ay, int *rowH) {
+     u32 dispcnt = reg32(e, REG_DISPCNT);
+     int n = 0;
++#ifdef ENHANCED_PORT
++    if (e->num == 0 && ++sKeptFrame % 300 == 0 && sKeptCheck > 0)
++        fprintf(stderr, "gpu2d: OBJs kept %lu, made %lu; checked %lu, differing %lu\n", (unsigned long)sKeptHits,
++                (unsigned long)sKeptMade, (unsigned long)sKeptChecked, (unsigned long)sKeptDiffer);
++    if (sKeptCheck < 0) sKeptCheck = getenv("ACWW_SPRITE_CHECK") && atoi(getenv("ACWW_SPRITE_CHECK"));
++#endif
+     u32 pal[256];  // (the OBJ palette as the atlas's pixels)
+     for (u32 i = 0; i < 256; i++) {
+         u16 c = pal16(e->palette + 0x200, i);
+@@ -197,9 +224,26 @@ int gpu2d_obj_sprites(const Engine *e, struct Gpu2dSprite *out, u32 *atlas, int
+ #endif
+         u32 hash = ((palHash ^ a0) * 16777619u ^ a1) * 16777619u ^ a2;
+         if (!affine && mode != 3 && !((a0 & 0x2000) && (dispcnt & 1u << 31))) {
+-            hash = sprite_tiles(e, dispcnt, a0, a1, a2, w, h, pal, atlas + *ay * GPU2D_ATLAS_W + *ax, hash);
+ #ifdef ENHANCED_PORT
++            // (a0's Y, a1's X and a2's priority left out: an OBJ that moves keeps its pixels; the tile mapping's bits)
++            hash = (((palHash ^ (dispcnt & 0x00300010u) ^ (a0 & 0xff00u)) * 16777619u ^ (a1 & 0xfe00u)) * 16777619u) ^ (a2 & 0xf3ffu);
++            hash = sprite_tiles(e, dispcnt, a0, a1, a2, w, h, pal, 0, hash);
++            if (e->num < 2 && n <= 128) {
++                __typeof__(sKept[0][0]) *k = &sKept[e->num][n - 1];
++                if (k->frame + 1 != sKeptFrame || k->atlas != atlas || k->key != hash || k->u != *ax || k->v != *ay ||
++                    k->w != bw || k->h != bh) {
++                    sprite_tiles(e, dispcnt, a0, a1, a2, w, h, pal, atlas + *ay * GPU2D_ATLAS_W + *ax, 0);
++                    k->atlas = atlas, k->key = hash, k->u = *ax, k->v = *ay, k->w = bw, k->h = bh;
++                    sKeptMade++;
++                } else {
++                    sKeptHits++;
++                    if (sKeptCheck > 0) kept_check(e, dispcnt, a0, a1, a2, w, h, pal, atlas + *ay * GPU2D_ATLAS_W + *ax);
++                }
++                k->frame = sKeptFrame;
++            }
+             s->hash = hash;
++#else
++            hash = sprite_tiles(e, dispcnt, a0, a1, a2, w, h, pal, atlas + *ay * GPU2D_ATLAS_W + *ax, hash);
+ #endif
+             *ax += bw;
+             if (bh > *rowH) *rowH = bh;
+-- 
+2.43.0
+
