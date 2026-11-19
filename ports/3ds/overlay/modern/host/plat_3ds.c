@@ -67,6 +67,8 @@ void host_plat_log_write(void) {
 // The options: there is no environment on the 3DS, so acww.cfg's `NAME=value` lines (`#` comments) become one, and
 // every ACWW_* option of docs/host.md works unchanged. stdout and stderr go to log.txt.
 void host_plat_init(void) {
+    remove(DIR "log.prev.txt");  // (the last run's log kept: a test's own is often the one before a new start)
+    rename(DIR "log.txt", DIR "log.prev.txt");
 #ifdef ENHANCED_PORT  // (the enhanced port: written out by a thread of its own, hw.c log_writer)
     LightLock_Init(&sLogLock);
     LightLock_Init(&sLogFileLock);

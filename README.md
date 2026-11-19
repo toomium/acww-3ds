@@ -133,7 +133,8 @@ doesn't have do more:
 | The touch screen | handheld: touches where the game's touch screen is shown |
 
 The port writes a log, `log.txt`, beside the program: send it along when you
-report a problem (its first line names the port's version).
+report a problem (its first line names the port's version). The run before is
+kept as `log.prev.txt`.
 
 The options page writes `acww.cfg` beside the program, a file of `NAME=value`
 lines that can also be edited by hand:

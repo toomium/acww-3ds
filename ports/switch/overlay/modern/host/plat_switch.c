@@ -66,6 +66,8 @@ void host_plat_log_write(void) {
 void host_plat_init(void) {
     mutexInit(&sLogLock);
     mutexInit(&sLogFileLock);
+    remove(DIR "log.prev.txt");  // (the last run's log kept: a test's own is often the one before a new start)
+    rename(DIR "log.txt", DIR "log.prev.txt");
     sLogFile = fopen(DIR "log.txt", "w");
     devoptab_list[STD_OUT] = devoptab_list[STD_ERR] = &sLogDevice;
     setvbuf(stdout, 0, _IONBF, 0);
