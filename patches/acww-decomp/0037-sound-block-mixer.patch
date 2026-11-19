@@ -1,0 +1,115 @@
+From ee08095a91d7d0b4705b5dfd81948cb92afb6015 Mon Sep 17 00:00:00 2001
+From: acww-3ds <noreply@invalid>
+Date: Tue, 17 Nov 2026 13:48:03 +0100
+Subject: [PATCH 4/5] Sound: the SPU mixed a channel and a block at a time
+
+spu_mix_until ran all 16 channels for every output sample (32,728 a second), with 64-bit pan sums, whether a
+channel played or not. Now a block of up to 512 samples is mixed a channel at a time, the channels that are off
+passed over (5 of 16 play on average in the scripted town run). While a capture unit records (the game's reverb,
+nearly all the time) the channels that read its buffer, and the capture, go sample by sample after the others'
+block, in mix_one's order; with the master off mix_one as before. The same samples: the PC build's ACWW_WAV of the
+scripted run to frame 8400 is byte for byte the same (sha1 ff1f7988).
+---
+ modern/host/snd7/spu.c | 81 +++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 73 insertions(+), 8 deletions(-)
+
+diff --git a/modern/host/snd7/spu.c b/modern/host/snd7/spu.c
+index 2912549..fd36a9e 100644
+--- a/modern/host/snd7/spu.c
++++ b/modern/host/snd7/spu.c
+@@ -244,19 +244,84 @@ static void mix_one(s16 out[2]) {
+     out[1] = (s16)clamp16((ro * mv >> 7) >> 8);
+ }
+ 
++// n output samples a channel at a time (as mix_one's, sample for sample: the registers don't change within a call,
++// each channel's state is its own, and the sums are the same terms; a channel that is off is passed over, where
++// mix_one ran all 16 for every sample). While a capture unit records (the game's reverb: nearly always), the
++// channels that read its buffer depend on what it writes sample by sample: those, and the capture, go sample by
++// sample after the others' block, in mix_one's order (each sample's channels before its capture).
++enum { BLOCK = 512 };
++static int overlaps(const SpuChannelRegs *r, int idx) {
++    u32 extent = (u32)r->pnt * 4 + r->len * 4, len = (u32)(spu_caplen[idx] ? spu_caplen[idx] : 1) * 4;
++    if (extent < 4) extent = 4;
++    return spu_capdad[idx] && r->sad < spu_capdad[idx] + len && spu_capdad[idx] < r->sad + extent;
++}
++static inline void add_terms(int ch, s32 v, s32 (*acc)[2][BLOCK], u32 i) {
++    s32 pan = (s32)(spu_ch[ch].cnt >> 16 & 0x7f), g = ch == 1 ? 1 : ch == 3 ? 2 : 0;
++    acc[g][0][i] += (s32)(((s64)v * (128 - pan)) >> 10);
++    acc[g][1][i] += (s32)(((s64)v * pan) >> 10);
++}
++static void mix_block(s16 *out, u32 n) {
++    static s32 acc[3][2][BLOCK];  // the mixer, channel 1, channel 3: left, right
++    static s32 val[2][BLOCK];     // channels 0 and 2 as they are (a capture of one channel)
++    memset(acc, 0, sizeof acc);
++    int capturing = (spu_capcnt[0] & 0x80) || (spu_capcnt[1] & 0x80);
++    u32 dependent = 0;
++    for (int ch = 0; ch < 16; ch++) {
++        SpuChannelRegs *r = &spu_ch[ch];
++        if (!(r->cnt & 0x80000000u) || (format_of(ch) != 3 && ((u32)r->pnt + r->len) * 4 < 16)) {
++            if (ch == 0 || ch == 2) memset(val[ch / 2], 0, n * sizeof(s32));
++            continue;
++        }
++        if (capturing && format_of(ch) != 3 && ((spu_capcnt[0] & 0x80 && overlaps(r, 0)) || (spu_capcnt[1] & 0x80 && overlaps(r, 1)))) {
++            dependent |= 1u << ch;
++            continue;
++        }
++        s32 pan = (s32)(r->cnt >> 16 & 0x7f), g = ch == 1 ? 1 : ch == 3 ? 2 : 0;
++        s32 *l = acc[g][0], *rr = acc[g][1];
++        for (u32 i = 0; i < n; i++) {
++            s32 v = run_channel(ch);  // (the pan read once: run_channel changes only the enable bit)
++            l[i] += (s32)(((s64)v * (128 - pan)) >> 10);
++            rr[i] += (s32)(((s64)v * pan) >> 10);
++            if (ch == 0 || ch == 2) val[ch / 2][i] = v;
++        }
++    }
++    int to1 = !(spu_soundcnt & 0x1000), to3 = !(spu_soundcnt & 0x2000);
++    u32 selL = spu_soundcnt >> 8 & 3, selR = spu_soundcnt >> 10 & 3;
++    s32 mv = spu_soundcnt & 0x7f;
++    for (u32 i = 0; i < n; i++) {
++        for (u32 d = dependent; d; d &= d - 1) {
++            int ch = __builtin_ctz(d);
++            s32 v = run_channel(ch);
++            add_terms(ch, v, acc, i);
++            if (ch == 0 || ch == 2) val[ch / 2][i] = v;
++        }
++        s32 l = acc[0][0][i] + (to1 ? acc[1][0][i] : 0) + (to3 ? acc[2][0][i] : 0);
++        s32 r = acc[0][1][i] + (to1 ? acc[1][1][i] : 0) + (to3 ? acc[2][1][i] : 0);
++        if (capturing) {
++            capture(0, spu_capcnt[0] & 2 ? clamp16(val[0][i] >> 11) : clamp16(l >> 8));
++            capture(1, spu_capcnt[1] & 2 ? clamp16(val[1][i] >> 11) : clamp16(r >> 8));
++        }
++        s32 lo = selL == 0 ? l : (selL & 1 ? acc[1][0][i] : 0) + (selL & 2 ? acc[2][0][i] : 0);
++        s32 ro = selR == 0 ? r : (selR & 1 ? acc[1][1][i] : 0) + (selR & 2 ? acc[2][1][i] : 0);
++        out[2 * i] = (s16)clamp16(((s64)lo * mv >> 7) >> 8);
++        out[2 * i + 1] = (s16)clamp16(((s64)ro * mv >> 7) >> 8);
++    }
++}
++
+ void spu_mix_until(u64 cycles) {
+ #ifndef ENHANCED_PORT  // (the enhanced port mixes on a thread of its own: the game's thread's profile mark isn't its)
+     HOST_PROF(PROF_SOUND);
+ #endif
+-    s16 buf[512 * 2];
+-    u32 n = 0;
++    s16 buf[BLOCK * 2];
+     while (sMixed + SAMPLE_CYCLES <= cycles) {
+-        mix_one(&buf[n * 2]);
+-        sMixed += SAMPLE_CYCLES;
+-        if (++n == 512) {
+-            snd7_output(buf, n);
+-            n = 0;
++        u32 n = (u32)((cycles - sMixed) / SAMPLE_CYCLES);
++        if (n > BLOCK) n = BLOCK;
++        if (!(spu_soundcnt & 0x8000)) {
++            for (u32 i = 0; i < n; i++) mix_one(&buf[i * 2]);
++        } else {
++            mix_block(buf, n);
+         }
++        sMixed += (u64)n * SAMPLE_CYCLES;
++        snd7_output(buf, n);
+     }
+-    if (n) snd7_output(buf, n);
+ }
+-- 
+2.43.0
+
