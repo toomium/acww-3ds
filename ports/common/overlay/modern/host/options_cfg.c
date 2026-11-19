@@ -88,6 +88,15 @@ int port_new_leaf_controls(void) {
     if (row == -2) row = row_of("ACWW_NL_CONTROLS");
     return row >= 0 && opt_get(row);
 }
+int gpu3d_wide_wanted(void);  // (gpu3d/gpu3d_geom.c: ACWW_WIDE)
+int port_wide_ranges(void) {
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("ACWW_WIDE_RANGES");
+        on = gpu3d_wide_wanted() && (!e || atoi(e));
+    }
+    return on;
+}
 
 void opt_set(int i, int v) {
     init();
