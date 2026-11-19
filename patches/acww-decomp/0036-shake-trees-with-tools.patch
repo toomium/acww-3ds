@@ -1,0 +1,54 @@
+From: acww-3ds <noreply@invalid>
+Subject: [PATCH] Field: "Shake trees with tools" (option ACWW_TOOL_SHAKE)
+
+From AC:WW+ (github.com/migueliranzo/acww-plus, MIT). A with the fishing rod in hand casts and with the net swings,
+even facing a tree; empty hands shake it. With the option PlayerActor_FieldStartToolAction (all eight of
+PlayerActor_FieldUseTool's calls) first tries the empty hands' mode 0 for the rod, and for the net unless a bug is
+within 2.5 units of the player (sFieldInsects: one on the trunk, or bees just out), so tree bugs can still be caught.
+With no tree ahead the cast or the swing follows as before. Off, the game's.
+---
+ src/ov003/unk_ov003_02204ce8.cpp | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/src/ov003/unk_ov003_02204ce8.cpp b/src/ov003/unk_ov003_02204ce8.cpp
+index 42fbd2b..69fc5ee 100644
+--- a/src/ov003/unk_ov003_02204ce8.cpp
++++ b/src/ov003/unk_ov003_02204ce8.cpp
+@@ -1,4 +1,8 @@
+ #include "ds_div.h"
++#ifdef ENHANCED_PORT
++#include "port_options.h"
++#include "field/Insect.h"
++#endif
+ #include "uptr.h"
+ // mwcc-version: 1.2/base
+ // mwcc-flags: -str reuse
+@@ -11696,8 +11700,28 @@ fail:
+ }
+ 
+ namespace ns_02204d90 {
++#ifdef ENHANCED_PORT
++extern "C" Insect sFieldInsects[8];  // (src/ov003/unk_ov003_02225800.cpp: the town's bugs, kind < 0 a free slot)
++// a bug within 2.5 units of the player (on the tree's trunk, or bees just out of it): the net is for it
++static BOOL PlayerActor_BugNear(PlayerActor *self) {
++    for (s32 i = 0; i < 8; i++) {
++        Insect *b = &sFieldInsects[i];
++        s32 dx = b->position.x - self->position.x, dz = b->position.z - self->position.z;
++        if (b->kind >= 0 && dx < 0x5000 && dx > -0x5000 && dz < 0x5000 && dz > -0x5000) return TRUE;
++    }
++    return FALSE;
++}
++#endif
+ extern "C" BOOL PlayerActor_FieldStartToolAction(PlayerActor *self, s32 mode, VecFx32 *pos) {
+     VecFx32 a, z, c, z2, t1, t2;
++#ifdef ENHANCED_PORT
++    // "Shake trees with tools" (port_options.h): the rod, and the net with no bug near, first try what empty hands do
++    // (mode 0: the tree ahead shaken); the cast or the swing only when there is none
++    if ((mode == 3 || (mode == 4 && !PlayerActor_BugNear(self))) && port_tool_shake()) {
++        VecFx32 p = *pos;
++        if (PlayerActor_FieldStartToolAction(self, 0, &p)) return TRUE;
++    }
++#endif
+     switch (mode) {
+     case 2:
+         PlayerActor_RequestAxeSwing(self, 6, -1);

@@ -1,0 +1,185 @@
+From: acww-3ds <noreply@invalid>
+Subject: [PATCH] Player: "New Leaf controls" swap tools with the D-pad's left
+ and right
+
+From AC:WW+ (github.com/migueliranzo/acww-plus, MIT), where L and R do it; here the D-pad's left and right, as part of
+"New Leaf controls" (ACWW_NL_CONTROLS). While the local player stands and the pockets could open, right takes the next
+tool from the pockets into the hand (the hand's into its pocket), left puts the tool away, or with empty hands takes
+the last one out again (modern/port/tool_swap.cpp: PlayerActor::waitCheckInput). The equip is the pocket menu's own
+request; its "item chosen" pose (Unk_02007694::mainAct05) goes back to standing, as there is no menu to close.
+
+The game's keys don't tell the D-pad from the circle pad or the stick, so the backends give the D-pad's own
+directions apart (gHostDpad, include/host_input.h: frontend_3ds.c, frontend_sdl.c), frontend.c keeps a tap for 20
+frames (one made during the equip's animation), and PlayerActor::readInput doesn't walk on the D-pad's left and right
+while the option is on. The circle pad and the stick walk as before; the D-pad's up and down too. A tap made while a menu or a talk is open is dropped
+(MenuManager::onExecute), so it doesn't swap once the menu has closed. ACWW_KEYS' directions count as the D-pad's.
+---
+ modern/host/frontend.c          | 24 ++++++++++++++++++++++++
+ modern/host/frontend_sdl.c      |  8 ++++++++
+ src/main/unk_02004558.cpp       | 12 ++++++++++++
+ src/main/unk_02004558_extra.cpp |  5 +++++
+ src/main/unk_0206e54c.cpp       |  5 +++++
+ 5 files changed, 54 insertions(+)
+
+diff --git a/modern/host/frontend.c b/modern/host/frontend.c
+index 4f837e4..57b1038 100644
+--- a/modern/host/frontend.c
++++ b/modern/host/frontend.c
+@@ -9,6 +9,9 @@
+ #include <string.h>
+ 
+ #include "frontend.h"
++#ifdef ENHANCED_PORT
++#include "host_input.h"
++#endif
+ #include "host.h"
+ #include "host_mem.h"
+ #include "options_cfg.h"
+@@ -28,6 +31,23 @@ AcwwShm *frontend_shm(void) { return sShm; }
+ // the circle pad for the game (include/host_input.h): its angle and tilt while it holds a direction down
+ volatile short gHostStickAngle;
+ volatile unsigned short gHostStickTilt;
++#ifdef ENHANCED_PORT
++volatile unsigned char gHostDpad;
++static unsigned sDpadTap;
++static unsigned long long sDpadTapFrame;
++unsigned host_dpad_tap(void) {
++    unsigned t = host_frame() - sDpadTapFrame < 20 ? sDpadTap : 0;
++    sDpadTap = 0;
++    return t;
++}
++// (once a frame: a left or right newly pressed on the D-pad remembered for host_dpad_tap)
++static void dpad_tap(void) {
++    static unsigned prev;
++    unsigned now = gHostDpad & 0x30 & ~prev;
++    prev = gHostDpad & 0x30;
++    if (now == 0x10 || now == 0x20) sDpadTap = now, sDpadTapFrame = host_frame();
++}
++#endif
+ static void stick(const AcwwShm *shm, u32 keys) {
+     static int on = -1;
+     if (on < 0) on = !getenv("ACWW_ANALOG") || atoi(getenv("ACWW_ANALOG"));
+@@ -90,6 +110,10 @@ void frontend_frame(void) {
+     u32 sk = scripted_keys();
+     keyinput &= (u16)~(sk & 0x3ff);
+     xy &= (u16)~(sk & 0x0c00);
++#ifdef ENHANCED_PORT
++    gHostDpad = (unsigned char)((sShm ? gHostDpad : 0) | (sk & 0xf0));  // (a script's directions are the D-pad's)
++    dpad_tap();
++#endif
+ #ifdef ENHANCED_PORT
+     {
+         u32 p = (~keyinput & 0x3ff) | (~xy & 0x0c00), hidden = p & ~opt_keys(p);
+diff --git a/modern/host/frontend_sdl.c b/modern/host/frontend_sdl.c
+index 831ee29..8ae6443 100644
+--- a/modern/host/frontend_sdl.c
++++ b/modern/host/frontend_sdl.c
+@@ -34,6 +34,9 @@
+ 
+ #include "coro.h"
+ #include "frontend.h"
++#ifdef ENHANCED_PORT
++#include "host_input.h"
++#endif
+ #include "frontend_ui.h"
+ #include "host.h"
+ #include "plat.h"
+@@ -265,6 +268,7 @@ static uint32_t pad_keys(void) {
+     // analog walk), its directions from a smaller tilt (as the 3DS's circle pad gives them)
+     enum { DEAD = 6000 };
+     int sx = 0, sy = 0;
++    unsigned dpad = 0;
+ #else
+     enum { DEAD = 16000 };
+ #endif
+@@ -273,6 +277,9 @@ static uint32_t pad_keys(void) {
+         SDL_GameController *c = sPads[p];
+         if (!c) continue;
+         k |= ui_pad_keys(c);
++#ifdef ENHANCED_PORT
++        dpad |= ui_pad_keys(c) & 0xf0;  // (the D-pad alone, without the stick: host_input.h)
++#endif
+         int x = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTX), y = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTY);
+ #ifdef ENHANCED_PORT
+         if (x * x + y * y > sx * sx + sy * sy) sx = x, sy = y;  // (of several controllers the one tilted most)
+@@ -288,6 +295,7 @@ static uint32_t pad_keys(void) {
+     }
+ #ifdef ENHANCED_PORT
+     sShm->stick_x = (int16_t)(sx * 156 / 32767), sShm->stick_y = (int16_t)(-sy * 156 / 32767);
++    gHostDpad = (unsigned char)dpad;
+ #endif
+     return k;
+ }
+diff --git a/src/main/unk_02004558.cpp b/src/main/unk_02004558.cpp
+index 811aa9c..aa075ea 100644
+--- a/src/main/unk_02004558.cpp
++++ b/src/main/unk_02004558.cpp
+@@ -1,3 +1,6 @@
++#ifdef ENHANCED_PORT
++#include "port_options.h"
++#endif
+ #include "game/CollisionState.h"
+ #include "host_mem.h"
+ #include "host_shared_calls.h"
+@@ -3831,6 +3834,9 @@ BOOL PlayerActor::waitFollowNet() {
+ void PlayerActor::waitCheckInput() {
+     using namespace nM;
+     s16 buf;
++#ifdef ENHANCED_PORT
++    if (Port_ToolSwapTick()) return;  // ("New Leaf controls": the D-pad's left / right, port_options.h)
++#endif
+     s32 r6 = ((PlayerActor *)(this))->getTargetWalkSpeed();
+     s32 r4 = 0;
+     if (Scene_InHouseRoom()) {
+@@ -4268,6 +4274,12 @@ void Unk_02007694::mainAct05() {
+         ((PlayerActor *)(this))->moveWithCollision();
+     }
+     ((PlayerActor *)(this))->updateBodyCollider();
++#ifdef ENHANCED_PORT
++    // a tool swapped with the D-pad (port_options.h): the pockets' "item chosen" pose ends here, with no menu to close
++    if (Port_ToolSwapEquipping() && gCommManager->isLocalSlot(((Unk_02007694 *)this)->sessionSlot) &&
++        ((PlayerActor *)(this))->requestWait(3, 5, -1))
++        Port_ToolSwapEquipped();
++#endif
+ }
+ 
+ void PlayerChangeClothesArgs::setChangeClothesArgs(u16 a, s32 b, s32 c) {
+diff --git a/src/main/unk_02004558_extra.cpp b/src/main/unk_02004558_extra.cpp
+index fc51bb8..3f87db8 100644
+--- a/src/main/unk_02004558_extra.cpp
++++ b/src/main/unk_02004558_extra.cpp
+@@ -927,6 +927,11 @@ void PlayerActor::readInput() {
+                 }
+             }
+             keys = gPad.cur;
++#ifdef ENHANCED_PORT
++            // "New Leaf controls": the D-pad's left and right swap tools (modern/port/tool_swap.cpp), they don't walk
++            // shortcut: the direction (gPad.dir) still has them when up or down is held too; split it if that matters
++            keys &= ~port_dpad_lr_held();
++#endif
+             if ((keys & 0x80) || (keys & 0x40) || (keys & 0x10) || (keys & 0x20)) {
+                 if (fast) {
+                     this->inputMagnitude = 0x1000;
+diff --git a/src/main/unk_0206e54c.cpp b/src/main/unk_0206e54c.cpp
+index 9047140..b0b1f80 100644
+--- a/src/main/unk_0206e54c.cpp
++++ b/src/main/unk_0206e54c.cpp
+@@ -2,6 +2,7 @@
+ #include "types.h"
+ #ifdef ENHANCED_PORT
+ #include "port_options.h"
++#include "host_input.h"
+ #endif
+ #include "menu/MenuProc.h"
+ #include "sys/ListNode.h"
+@@ -211,6 +212,10 @@ BOOL MenuManager::onExecute() {
+     MenuCtrl_LoadRequestedOverlays();
+     MenuCtrl_CreateRequestedMenu();
+     MenuScreen_Update();
++#ifdef ENHANCED_PORT
++    // a D-pad tap made in a menu or a talk isn't the tools' (modern/port/tool_swap.cpp): dropped every frame there
++    if (!MenuCtrl_IsIdle() || TalkRequest_IsActive()) host_dpad_tap();
++#endif
+     if (Stub_ReturnFalse()) return TRUE;
+     if (Scene_GetCurrent() == 6) return TRUE;
+     if (gSoftResetRequested) return TRUE;

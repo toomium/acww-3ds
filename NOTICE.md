@@ -24,6 +24,35 @@ documentation, and the changes the patches in `patches/` make.
 [GabeSud0/pokeplatinum-3ds](https://github.com/GabeSud0/pokeplatinum-3ds)
 (GPL-3.0), whose forwarder is also the model for `ports/3ds/cia/forwarder.c`.
 
+The options "Bell bags stack", "Shake trees with tools", "Several items for
+Blathers", "Nook's without multiplayer", "Monkeys move in" and the tool swap of
+"New Leaf controls" follow
+[migueliranzo/acww-plus](https://github.com/migueliranzo/acww-plus) (a ROM
+hack; its findings, written again for the decompilation's code), under its MIT
+license:
+
+> MIT License
+>
+> Copyright (c) 2026 migueliranzo
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all
+> copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
+
 ## Rules for contributors
 
 - Never commit ROMs, extracted assets, save files or built game binaries.

@@ -1,0 +1,29 @@
+From: acww-3ds <noreply@invalid>
+Subject: [PATCH] Pockets: "Bell bags stack" (option ACWW_BELL_STACK)
+
+From AC:WW+ (github.com/migueliranzo/acww-plus, MIT; its shipped version, which leaves the wallet alone). A Bell bag
+picked up or dug up joins the first pocket bag the two make a bag with (100 + 100: a 200-Bell bag; up to 900, then
+whole thousands to 99,000), with full pockets too; else it takes a pocket of its own. It goes the stacked fruit's way:
+Pocket_FindFruitStack (modern/port/stacked_fruit.cpp) finds the bag, which the full-pockets checks already ask, and
+Pocket_AddFoundItem adds the Bells. Not online, as the fruit. Off, the game's.
+---
+ src/main/unk_02098e90.cpp | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/src/main/unk_02098e90.cpp b/src/main/unk_02098e90.cpp
+index eb931ad..4e72447 100644
+--- a/src/main/unk_02098e90.cpp
++++ b/src/main/unk_02098e90.cpp
+@@ -2053,9 +2053,10 @@ extern "C" void Pocket_SetFoundItem(u16 *a, s32 b) {
+ extern "C" BOOL Pocket_AddFoundItem(u16 *a) {
+ #ifdef ENHANCED_PORT
+     s32 k = Pocket_FindFruitStack(a);
+-    if (k != -1) {  // onto the stack (stacked fruit, port_options.h)
++    if (k != -1) {  // onto the stack (stacked fruit, port_options.h), or the Bell bag ("Bell bags stack")
+         u16 v = *((PlayerInventory *)PlayerData_GetCurrent()->getInventory())->getPocket(k);
+-        v = port_fruit_make(port_fruit_kind(v), port_fruit_count(v) + 1);
++        v = port_bag_bells(v) ? port_bag_of(port_bag_bells(v) + port_bag_bells(*a)) :
++                                port_fruit_make(port_fruit_kind(v), port_fruit_count(v) + 1);
+         Pocket_SetItem(&v, 0, k);
+         return TRUE;
+     }

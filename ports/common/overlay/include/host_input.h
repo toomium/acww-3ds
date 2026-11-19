@@ -9,6 +9,12 @@ extern "C" {
 #endif
 extern volatile short gHostStickAngle;
 extern volatile unsigned short gHostStickTilt;
+// The D-pad's own directions held (KEYINPUT's bits 4-7: right left up down), without the circle pad's or the stick's
+// (the backends set it; the game's keys have both): "New Leaf controls" swap tools with its left and right
+// (modern/port/tool_swap.cpp). host_dpad_tap: a left (0x20) or right (0x10) newly pressed in the last 20 frames, taken
+// (0 none); a tap during the equip's animation thus waits for the player to stand again.
+extern volatile unsigned char gHostDpad;
+unsigned host_dpad_tap(void);
 #ifdef __cplusplus
 }
 #endif

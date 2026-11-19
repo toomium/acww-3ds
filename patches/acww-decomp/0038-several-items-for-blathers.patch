@@ -1,0 +1,116 @@
+From: acww-3ds <noreply@invalid>
+Subject: [PATCH] Museum: "Several items for Blathers" (option
+ ACWW_MUSEUM_BULK)
+
+From AC:WW+ (github.com/migueliranzo/acww-plus, MIT). "Donation!" and "Check a fossil!" take one item at a time:
+the pocket picker (ov101 PocketItemSelectMenu), his answer, "anything else?", the picker again. With the option, X in
+his picker marks a pocket (the grid's own ring) or unmarks it; A picks as before. Each time he would open the picker
+again (SpNpcBlathersTalk::openDonationPicker / openAppraisalPicker) the next marked pocket is his instead, as if
+picked; so the questions stay his, only the picker is left out. The marks and the picked item checks are
+modern/port/museum_bulk.cpp's. Cancelling the picker or his greeting drops the marks. Off, the game's.
+---
+ src/ov047/unk_ov047_02258de0.cpp | 26 ++++++++++++++++++++++++++
+ src/ov101/unk_ov101_02294c40.cpp | 12 ++++++++++++
+ 2 files changed, 38 insertions(+)
+
+diff --git a/src/ov047/unk_ov047_02258de0.cpp b/src/ov047/unk_ov047_02258de0.cpp
+index 9a5bfb8..7298c41 100644
+--- a/src/ov047/unk_ov047_02258de0.cpp
++++ b/src/ov047/unk_ov047_02258de0.cpp
+@@ -1,4 +1,7 @@
+ #include "uptr.h"
++#ifdef ENHANCED_PORT
++#include "port_options.h"
++#endif
+ // mwcc-flags: -str reuse
+ #include "types.h"
+ #include "gfx/VecFx32.h"
+@@ -585,6 +588,9 @@ void SpNpcBlathersTalk::scriptDonationItemChosen() {
+     void *o = window;
+     SpNpcBlathersMsgLocal m;
+     m.msgIndex = 0x22;
++#ifdef ENHANCED_PORT
++    Port_MuseumOpened(MenuCtrl_IsResultOk());
++#endif
+     if (MenuCtrl_IsResultOk()) {
+         MsgString9B ob;
+         pocketSlot = -1;
+@@ -663,6 +669,9 @@ void SpNpcBlathersTalk::scriptAppraisalItemChosen() {
+     void *o = window;
+     SpNpcBlathersMsgLocal m;
+     m.msgIndex = 0x22;
++#ifdef ENHANCED_PORT
++    Port_MuseumOpened(MenuCtrl_IsResultOk());
++#endif
+     if (MenuCtrl_IsResultOk()) {
+         pocketSlot = MenuCtrl_GetIndex();
+         item = Pocket_GetItem(pocketSlot);
+@@ -899,6 +908,9 @@ void SpNpcBlathersTalk::onMessageEnd(u32) {
+         goto end;
+     }
+     if ((s32)msgIndex < 0xc) {
++#ifdef ENHANCED_PORT
++        Port_MuseumReset();  // (his greeting: a new conversation)
++#endif
+         if (gSaveData.testFlag(0xc)) {
+             nextMsg = 0x44;
+         } else {
+@@ -1004,12 +1016,26 @@ end:;
+ }
+ 
+ void SpNpcBlathersTalk::openDonationPicker() {
++#ifdef ENHANCED_PORT
++    // "Several items for Blathers" (port_options.h): the next pocket marked in his picker instead of the picker
++    if (Port_MuseumNext()) {
++        scriptDonationItemChosen();
++        return;
++    }
++#endif
+     ((ActorTalkRequest *)(this))->setPocketFilter(SpNpcBlathers_IsDonatableItem, 0xd, 1);
+     ((ActorTalkRequest *)(this))->openSubScene(0);
+     setScript(0);
+ }
+ 
+ void SpNpcBlathersTalk::openAppraisalPicker() {
++#ifdef ENHANCED_PORT
++    // "Several items for Blathers" (port_options.h): the next pocket marked in his picker instead of the picker
++    if (Port_MuseumNext()) {
++        scriptAppraisalItemChosen();
++        return;
++    }
++#endif
+     ((ActorTalkRequest *)(this))->setPocketFilter(SpNpcBlathers_IsUnidentifiedFossil, 0xd, 1);
+     ((ActorTalkRequest *)(this))->openSubScene(0);
+     setScript(1);
+diff --git a/src/ov101/unk_ov101_02294c40.cpp b/src/ov101/unk_ov101_02294c40.cpp
+index 8579d2a..746c689 100644
+--- a/src/ov101/unk_ov101_02294c40.cpp
++++ b/src/ov101/unk_ov101_02294c40.cpp
+@@ -1,5 +1,8 @@
+ // ov101: scene overlay (class PocketItemSelectMenu, vtable 0x02296b38, 0x2804 bytes).
+ #include "types.h"
++#ifdef ENHANCED_PORT
++#include "port_options.h"
++#endif
+ #include "host_shared_calls.h"
+ #include "Unk_020d8c7c.h"
+ #include "ui/CursorMotion.h"
+@@ -534,9 +537,18 @@ void PocketItemSelectMenu::mainAct06() {
+         updateBalloonForCursor();
+         moveCursorToTarget();
+         nameBalloon.hide(0);
++#ifdef ENHANCED_PORT
++    } else if (Port_MuseumPickerOpen() && isPocketSlot(cursorSlot) && isSlotDisabled(cursorSlot) == 0 &&
++               isSlotEmpty(cursorSlot) == 0 && (gPad[1] & 0x400) != 0) {
++        Port_MuseumMark(cursorSlot, pocketGrid.markedBits);  // ("Several items for Blathers": X marks, port_options.h)
++        Snd_PlaySe(0x27);
++#endif
+     } else if (isSlotDisabled(cursorSlot) == 0 && (gPad[1] & 1) != 0) {
+         if (isPocketSlot(cursorSlot)) {
+             if (isSlotEmpty(cursorSlot) == 0) {
++#ifdef ENHANCED_PORT
++                Port_MuseumPicked(cursorSlot, pocketGrid.markedBits);
++#endif
+                 selectPocket(cursorSlot, 0);
+             }
+         } else if (cursorSlot == 0xf) {

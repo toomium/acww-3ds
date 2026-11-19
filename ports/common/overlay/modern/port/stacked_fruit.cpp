@@ -46,6 +46,16 @@ extern "C" u8 *InventoryItemGrid_StackIcon(u8 *src, u32 item, u32 pal)
 // (port_options.h; src/main/unk_02098e90.cpp Pocket_AddFoundItem)
 extern "C" int Pocket_FindFruitStack(u16 *a) {
     PlayerInventory *inv = (PlayerInventory *)PlayerData_GetCurrent()->getInventory();
+    // "Bell bags stack" (port_options.h): a bag joins the first pocket bag the two make a bag with (100 + 100: a
+    // 200-Bell bag; 900 + 1,000 none); the wallet is left alone, as in AC:WW+
+    if (port_bag_bells(*a)) {
+        if (!port_bell_stack() || ((CommManager *)(gCommManager))->isOnline()) return -1;
+        for (s32 i = 0; i < 15; i++)
+            if (port_bag_bells(*inv->getPocket(i)) && inv->getPocketFlags(i) == 0 &&
+                port_bag_of(port_bag_bells(*inv->getPocket(i)) + port_bag_bells(*a)))
+                return i;
+        return -1;
+    }
     s32 f = port_fruit_kind(*a);
     if (!port_stack_fruit() || port_fruit_count(*a) != 1 || ((CommManager *)(gCommManager))->isOnline()) return -1;
     for (s32 i = 0; i < 15; i++) {

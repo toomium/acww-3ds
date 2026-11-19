@@ -9,7 +9,8 @@
 enum { OPT_APPLY_LIVE = 1 };  // opt_set applies at once (setenv + apply function); else the value waits for a restart
 
 typedef struct {
-    const char *group, *label, *name;  // name: the ACWW_* variable
+    const char *group, *label, *name;  // group: the page's tab; name: the ACWW_* variable
+    const char *desc;                  // what it does, under the rows (the page wraps it)
     int def, live;                     // default (0 / 1); live: changes at once
     void (*apply)(int);
     int count, first;                  // a choice (count > 0): the values first .. first + count - 1, shown as

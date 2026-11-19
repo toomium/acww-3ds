@@ -29,21 +29,35 @@ void gld_set_layout(int layout);  // gl_display.c
 static void apply_layout(int v) { gld_set_layout(v); }
 static const char *const kLayouts[] = {"One screen", "Side by side", "Stacked", "Bottom big", "Top big", "Bottom only", "Top only"};
 static const char *const kScales[] = {"1x", "2x", "3x", "4x"};
+#endif
+// The page's rows by tab (group). The enhancements from AC:WW+ (github.com/migueliranzo/acww-plus, MIT) are read by the
+// game (include/port_options.h), live, as are "Stacked fruit" and "New Leaf controls".
+#define FPS {"Screen", "60 fps", "ACWW_PICA_INTERP", "Draws a picture between each two of the game's own.", 1, 1, apply_interp, 0, 0, 0}
+// (read every frame by gpu3d_wide_wanted: only after a restart)
+#define WIDE {"Screen", "Wide screen", "ACWW_WIDE", "The town drawn out to the screen's sides.", 1, 0, 0, 0, 0, 0}
+#define PLAY_TOWN_ROWS                                                                                                       \
+    {"Play", "New Leaf controls", "ACWW_NL_CONTROLS", "Y picks up, B runs, X opens the pockets. D-pad left and right swap tools.", 0, 1, 0, 0, 0, 0}, \
+    {"Play", "Stacked fruit", "ACWW_STACK_FRUIT", "Up to 9 of a fruit in one pocket.", 0, 1, 0, 0, 0, 0},                       \
+    {"Play", "Bell bags stack", "ACWW_BELL_STACK", "A Bell bag picked up joins one in your pockets.", 0, 1, 0, 0, 0, 0},        \
+    {"Play", "Shake trees with tools", "ACWW_TOOL_SHAKE", "A with the net or the fishing rod shakes the tree ahead.", 0, 1, 0, 0, 0, 0}, \
+    {"Town", "Several items for Blathers", "ACWW_MUSEUM_BULK", "In his list X marks items; he then takes them one by one.", 0, 1, 0, 0, 0, 0}, \
+    {"Town", "Nook's without multiplayer", "ACWW_NOOK_SOLO", "Nookington's and Nook's sales without a second player.", 0, 1, 0, 0, 0, 0}, \
+    {"Town", "Monkeys move in", "ACWW_MONKEYS", "Champ, Nana, Simon, Tammi, Monty and Elise can move in.", 0, 1, 0, 0, 0, 0}
+#ifdef __SWITCH__
 static Option sOpts[] = {
-    {"Game", "60 fps", "ACWW_PICA_INTERP", 1, 1, apply_interp, 0, 0, 0},
-    {"Game", "Wide screen", "ACWW_WIDE", 1, 0, 0, 0, 0, 0},  // read every frame by gpu3d_wide_wanted: only after a restart
-    {"Game", "Screen layout", "ACWW_LAYOUT", 0, 1, apply_layout, 7, 0, kLayouts},
-    {"Game", "Resolution", "ACWW_SWITCH_SCALE", 3, 0, 0, 4, 1, kScales},  // (gl_display.c gld_scale: at the start)
-    {"Enhancements", "Stacked fruit", "ACWW_STACK_FRUIT", 0, 1, 0, 0, 0, 0},  // read by the game (port_stack_fruit)
-    {"Enhancements", "New Leaf controls", "ACWW_NL_CONTROLS", 0, 1, 0, 0, 0, 0},  // read by the game (port_new_leaf_controls)
+    FPS,
+    WIDE,
+    {"Screen", "Screen layout", "ACWW_LAYOUT", "How the two screens share the display (also L3).", 0, 1, apply_layout, 7, 0, kLayouts},
+    {"Screen", "Resolution", "ACWW_SWITCH_SCALE", "How sharp the screens are drawn.", 3, 0, 0, 4, 1, kScales},  // (gl_display.c gld_scale: at the start)
+    PLAY_TOWN_ROWS,
 };
 #else
 static Option sOpts[] = {
-    {"Game", "60 fps", "ACWW_PICA_INTERP", 1, 1, apply_interp, 0, 0, 0},
-    {"Game", "Wide screen", "ACWW_WIDE", 1, 0, 0, 0, 0, 0},  // read every frame by gpu3d_wide_wanted: only after a restart
-    {"Game", "Main screen on top", "ACWW_MAIN_TOP", 0, 1, 0, 0, 0, 0},  // read every frame by gpu2d's top_engine
-    {"Enhancements", "Stacked fruit", "ACWW_STACK_FRUIT", 0, 1, 0, 0, 0, 0},  // read by the game (port_stack_fruit)
-    {"Enhancements", "New Leaf controls", "ACWW_NL_CONTROLS", 0, 1, 0, 0, 0, 0},  // read by the game (port_new_leaf_controls)
+    FPS,
+    WIDE,
+    // (read every frame by gpu2d's top_engine)
+    {"Screen", "Main screen on top", "ACWW_MAIN_TOP", "The town on the top screen; the menus open below.", 0, 1, 0, 0, 0, 0},
+    PLAY_TOWN_ROWS,
 };
 #endif
 #define NOPT ((int)(sizeof sOpts / sizeof *sOpts))
@@ -70,24 +84,26 @@ int opt_count(void) { return NOPT; }
 const Option *opt_info(int i) { return &sOpts[i]; }
 int opt_get(int i) { init(); return sVal[i]; }
 
-// (include/port_options.h) the game's view of the enhancements' rows, found by their names
-int port_stack_fruit(void) {
-    static int row = -2;
-    if (row == -2) row = row_of("ACWW_STACK_FRUIT");
-    return row >= 0 && opt_get(row);
+// (include/port_options.h) the game's view of the enhancements' rows, found by their names (0 when the page hasn't it)
+static int row_on(const char *name, int *row) {
+    if (*row == -2) *row = row_of(name);
+    return *row >= 0 && opt_get(*row);
 }
+#define ROW_ON(fn, name) \
+    int fn(void) {       \
+        static int row = -2; \
+        return row_on(name, &row); \
+    }
+ROW_ON(port_stack_fruit, "ACWW_STACK_FRUIT")
 // (gpu2d.c, src/main/unk_0206db88.cpp) the town and the rooms kept on the top screen, the pause menu opening without
 // the screens changing places
-int port_main_top(void) {
-    static int row = -2;
-    if (row == -2) row = row_of("ACWW_MAIN_TOP");
-    return row >= 0 && opt_get(row);
-}
-int port_new_leaf_controls(void) {
-    static int row = -2;
-    if (row == -2) row = row_of("ACWW_NL_CONTROLS");
-    return row >= 0 && opt_get(row);
-}
+ROW_ON(port_main_top, "ACWW_MAIN_TOP")
+ROW_ON(port_new_leaf_controls, "ACWW_NL_CONTROLS")
+ROW_ON(port_bell_stack, "ACWW_BELL_STACK")
+ROW_ON(port_tool_shake, "ACWW_TOOL_SHAKE")
+ROW_ON(port_museum_bulk, "ACWW_MUSEUM_BULK")
+ROW_ON(port_nook_solo, "ACWW_NOOK_SOLO")
+ROW_ON(port_monkeys, "ACWW_MONKEYS")
 int gpu3d_wide_wanted(void);  // (gpu3d/gpu3d_geom.c: ACWW_WIDE)
 int port_wide_ranges(void) {
     static int on = -1;
@@ -203,20 +219,52 @@ static void fill(uint32_t *px, int x0, int y0, int x1, int y1, uint32_t c) {
         for (int x = x0; x < x1; x++) px[y * PW + x] = c;
 }
 
-// ACWW_OPT_TEXT=file.ppm: the words the page uses, written the first time the menu opens (to check the letters)
+// s wrapped into lines w wide from (x, y) on, lines `step` apart (px NULL: only counted); returns the y after the last
+static int wrap(uint32_t *px, int rows, int x, int y, int w, int step, const char *s, uint32_t colour) {
+    char line[96];
+    int n = 0;
+    while (*s) {
+        const char *e = s;
+        while (*e && *e != ' ') e++;  // the next word
+        char t[96];
+        int k = snprintf(t, sizeof t, "%.*s%s%.*s", n, line, n ? " " : "", (int)(e - s), s);
+        if (n && text(0, 0, 0, 0, t, 0) > w) {  // (the word on the next line)
+            text(px, rows, x, y, line, colour);
+            y += step, n = 0;
+            continue;
+        }
+        n = k < (int)sizeof line ? k : (int)sizeof line - 1;
+        memcpy(line, t, (size_t)n);
+        line[n] = 0;
+        s = *e ? e + 1 : e;
+    }
+    if (n) text(px, rows, x, y, line, colour), y += step;
+    return y;
+}
+
+// ACWW_OPT_TEXT=file.ppm: every word the page shows, written the first time the menu opens (to check the letters: a
+// letter the game's font lacks is left out)
 static void text_test(void) {
     static int done;
     const char *name = getenv("ACWW_OPT_TEXT");
     if (done || !name || !sMenu.fontHeader) return;
     done = 1;
-    static uint32_t px[PW * 96];
-    fill(px, 0, 0, PW, 96, RGBA(255, 255, 255));
-    static const char *const words[] = {"Options", "Game", "60 fps", "Wide screen", "On", "Off"};
-    for (int i = 0; i < 6; i++) text(px, 96, 4, 16 * i, words[i], RGBA(0, 0, 0));
+    enum { H = 1024 };
+    static uint32_t px[PW * H];
+    fill(px, 0, 0, PW, H, RGBA(255, 255, 255));
+    int y = 0;
+    static const char *const words[] = {"Options On Off", "Takes effect after a restart.", "Left and right: the other tabs."};
+    for (int i = 0; i < 3; i++) text(px, H, 4, y, words[i], RGBA(0, 0, 0)), y += 16;
+    for (int i = 0; i < NOPT && y < H - 64; i++) {
+        text(px, H, 4, y, sOpts[i].group, RGBA(0, 0, 160));
+        text(px, H, 60, y, sOpts[i].label, RGBA(0, 0, 0));
+        y = wrap(px, H, 4, y + 16, 228, 16, sOpts[i].desc, RGBA(80, 80, 80));
+        for (int v = 0; v < sOpts[i].count; v++) text(px, H, 4 + 60 * (v % 4), y, sOpts[i].values[v], RGBA(0, 0, 0)), y += v % 4 == 3 || v == sOpts[i].count - 1 ? 16 : 0;
+    }
     FILE *f = fopen(name, "wb");
     if (!f) return;
-    fprintf(f, "P6\n%d 96\n255\n", PW);
-    for (int i = 0; i < PW * 96; i++) fputc(px[i] >> 24, f), fputc(px[i] >> 16 & 255, f), fputc(px[i] >> 8 & 255, f);
+    fprintf(f, "P6\n%d %d\n255\n", PW, y);
+    for (int i = 0; i < PW * y; i++) fputc(px[i] >> 24, f), fputc(px[i] >> 16 & 255, f), fputc(px[i] >> 8 & 255, f);
     fclose(f);
 }
 
@@ -282,54 +330,85 @@ static void draw_hand(uint32_t *px, int x, int y) {
             }
 }
 
-// the rows' step: 18 pixels, 16 when the rows and their groups' headings wouldn't fit above "* after a restart" (164)
-static int row_step(void) {
+// The page's tabs: the rows' groups, in the table's order. The cursor is on a row of the tab shown (sCursor 0..), or
+// on the tabs themselves (-1), where left and right go to the next tab.
+enum { MAXTAB = 4, MAXROW = 4 };
+static const char *sTabName[MAXTAB];
+static int sTabs, sTab;
+static int tab_rows(int t, int *rows) {  // the option indices of tab t's rows; their count
+    if (!sTabs)
+        for (int i = 0; i < NOPT; i++) {
+            int k = 0;
+            while (k < sTabs && strcmp(sTabName[k], sOpts[i].group)) k++;
+            if (k == sTabs && sTabs < MAXTAB) sTabName[sTabs++] = sOpts[i].group;
+        }
     int n = 0;
-    const char *group = "";
-    for (int i = 0; i < NOPT; i++, n++)
-        if (strcmp(group, sOpts[i].group)) group = sOpts[i].group, n++;
-    return 46 + n * 18 <= 164 ? 18 : 46 + n * 16 <= 164 ? 16 : 15;
+    for (int i = 0; i < NOPT && n < MAXROW; i++)
+        if (!strcmp(sOpts[i].group, sTabName[t])) rows[n++] = i;
+    return n;
 }
-// the "* after a restart" line: under the rows (at 164, or right below them when they reach further: the Switch's)
-static int note_y(void) {
-    int n = 0;
-    const char *group = "";
-    for (int i = 0; i < NOPT; i++, n++)
-        if (strcmp(group, sOpts[i].group)) group = sOpts[i].group, n++;
-    return 46 + n * row_step() <= 164 ? 164 : 46 + n * row_step();
+
+// The layout: the title and the tabs in the band (tab t from tab_x[t] to tab_x[t + 1] - 3, the last one ending at 244),
+// the rows from 50, 19 apart, and the box with the chosen row's description at the bottom.
+enum { TAB_Y = 24, ROW_Y = 50, ROW_STEP = 19, VAL_X = 220, DESC_Y = 129 };  // (the description: 3 lines)
+static void tab_x(int *x) {
+    int rows[MAXROW];
+    tab_rows(0, rows);
+    x[sTabs] = 247;
+    for (int t = sTabs - 1; t >= 0; t--) x[t] = x[t + 1] - text(0, 0, 0, 0, sTabName[t], 0) - 16 - 3;
+}
+static int row_y(int k) { return ROW_Y + k * ROW_STEP; }  // the top of the tab's row k (its text's cell)
+
+// a small triangle pointing left (dir -1) or right (1), 3x5, its tip at x
+static void arrow(uint32_t *px, int x, int y, int dir, uint32_t c) {
+    for (int r = 0; r < 5; r++)
+        for (int k = 0; k <= 2 - (r < 2 ? 2 - r : r - 2); k++) px[(y + r) * PW + x - dir * (2 - k)] = c;
 }
 
 static void draw_picture(uint32_t *px) {
     memset(px, 0, PW * PH * 4);
     draw_button(px, sMenu.curTab == PORT_OPT_TAB);
-    // the page as the other tabs' panels: a light edge, a coloured band (slate blue-grey, its own), the title in a label,
-    // a pale inner panel
-    const uint32_t ink = RGBA(52, 62, 86), head = RGBA(88, 112, 160), pale = RGBA(236, 241, 247);
+    // the page as the other tabs' panels: a light edge, a coloured band (slate blue-grey, its own) with the title and the
+    // tabs (the one shown in the inner panel's colour, as a folder's), the pale inner panel
+    const uint32_t ink = RGBA(52, 62, 86), head = RGBA(88, 112, 160), pale = RGBA(236, 241, 247), band = RGBA(112, 134, 170);
+    const uint32_t white = RGBA(255, 255, 255), dim = RGBA(140, 160, 194), lit = RGBA(210, 222, 242);
     rfill(px, 3, 18, 253, 190, 12, RGBA(222, 229, 240));
-    rfill(px, 6, 21, 250, 187, 10, RGBA(112, 134, 170));
-    rfill(px, 36, 24, 190, 40, 8, RGBA(255, 255, 255));
-    rfill(px, 10, 43, 246, 183, 6, pale);
-    text(px, PH, 113 - text(0, 0, 0, 0, "Options", 0) / 2, 24, "Options", ink);
-    int y = 46, handY = -1, step = row_step();
-    const char *group = "";
-    int restart = 0;
-    for (int i = 0; i < NOPT; i++) {
-        if (strcmp(group, sOpts[i].group)) {
-            group = sOpts[i].group;
-            text(px, PH, 16, y, group, head);
-            y += step;
-        }
-        if (i == sCursor) handY = y;
-        int x = text(px, PH, 22, y, sOpts[i].label, ink);
-        if (!sOpts[i].live) text(px, PH, x, y, " *", head), restart = 1;
-        const char *v = sOpts[i].count ? sOpts[i].values[sVal[i] - sOpts[i].first] : sVal[i] ? "On" : "Off";
-        text(px, PH, 226 - text(0, 0, 0, 0, v, 0), y, v, ink);  // (room right of it for the hand)
-        y += step;
+    rfill(px, 6, 21, 250, 187, 10, band);
+    text(px, PH, 14, TAB_Y, "Options", white);
+    int x[MAXTAB + 1], rows[MAXROW], n = tab_rows(sTab, rows);
+    tab_x(x);
+    for (int t = 0; t < sTabs; t++) {
+        if (t == sTab) rfill(px, x[t], TAB_Y - 2, x[t + 1] - 3, 48, 6, pale);
+        else rfill(px, x[t], TAB_Y, x[t + 1] - 3, TAB_Y + 16, 6, sCursor < 0 ? lit : dim);
+        text(px, PH, x[t] + 8, TAB_Y, sTabName[t], t == sTab ? ink : sCursor < 0 ? ink : white);
     }
-    if (restart) text(px, PH, 16, note_y(), "* after a restart", head);
-    // the cursor: the hand on the row's value, as the friends' tab points at a name (only while the page is the tab: the
-    // picture is drawn at the start too, before the menus' tiles are loaded)
-    if (handY >= 0 && sMenu.curTab == PORT_OPT_TAB) draw_hand(px, 224, handY - 4);
+    rfill(px, 10, 43, 246, 183, 6, pale);
+    if (sTab < sTabs) fill(px, x[sTab] + 2, 43, x[sTab + 1] - 5, 46, pale);  // (the tab joined to the panel)
+    int handX = -1, handY = 0;
+    for (int k = 0; k < n; k++) {
+        const Option *o = &sOpts[rows[k]];
+        int y = row_y(k), v = sVal[rows[k]];
+        if (k == sCursor) rfill(px, 13, y - 2, 243, y + 16, 6, lit), handX = VAL_X + 2, handY = y - 4;
+        text(px, PH, 20, y, o->label, ink);
+        // the value in a pill: On green, Off grey, a choice with arrows to its sides
+        const char *s = o->count ? o->values[v - o->first] : v ? "On" : "Off";
+        int w = text(0, 0, 0, 0, s, 0), x0 = VAL_X - w - (o->count ? 22 : 12);
+        rfill(px, x0, y - 1, VAL_X, y + 15, 7, o->count ? head : v ? RGBA(84, 156, 100) : RGBA(178, 188, 204));
+        text(px, PH, x0 + (o->count ? 11 : 6), y, s, o->count || v ? white : ink);
+        if (o->count) arrow(px, x0 + 4, y + 5, -1, white), arrow(px, VAL_X - 5, y + 5, 1, white);
+    }
+    // the description: the row's (and when it waits for a restart), or what the tabs do
+    rfill(px, 14, DESC_Y, 242, 181, 6, RGBA(222, 229, 240));
+    char d[160];
+    if (sCursor >= 0 && sCursor < n)
+        snprintf(d, sizeof d, "%s%s", sOpts[rows[sCursor]].desc, sOpts[rows[sCursor]].live ? "" : " Takes effect after a restart.");
+    else
+        snprintf(d, sizeof d, "Left and right: the other tabs.");
+    wrap(px, PH, 20, DESC_Y + 3, 216, 16, d, ink);
+    if (sCursor < 0) handX = x[sTab + 1] - 12, handY = TAB_Y + 8;
+    // the cursor: the hand, as the friends' tab points at a name (only while the page is the tab: the picture is drawn at
+    // the start too, before the menus' tiles are loaded)
+    if (handX >= 0 && sMenu.curTab == PORT_OPT_TAB) draw_hand(px, handX, handY);
 }
 
 static int any_changed(void) {
@@ -350,19 +429,15 @@ static void page_leave(int t) {
 enum { K_A = 1, K_B = 2, K_SELECT = 4, K_RIGHT = 16, K_LEFT = 32, K_UP = 64, K_DOWN = 128, K_R = 256, K_L = 512, K_X = 1024, K_Y = 2048 };
 enum { BTN_X = 26, BTN_W = 24 };
 
-static int row_y(int i) {  // the top of option i's row in the page's picture (as draw_picture lays it out)
-    int y = 46, step = row_step();
-    const char *group = "";
-    for (int k = 0;; k++) {
-        if (strcmp(group, sOpts[k].group)) group = sOpts[k].group, y += step;
-        if (k == i) return y;
-        y += step;
-    }
-}
 // (a choice: the next value, or with Left the one before)
 static void page_toggle(int i, int back) {
     opt_set(i, sOpts[i].count ? sVal[i] + (back ? -1 : 1) : !sVal[i]);
     sSound = 0x27;
+}
+static void page_tab(int t) {  // another tab shown
+    int rows[MAXROW];
+    tab_rows(0, rows);
+    sTab = (t + sTabs) % sTabs, sSound = 0x3b;
 }
 
 // The pressed keys (bit set = pressed; KEYINPUT's 0-9, X 10, Y 11) as the game gets them. Once a frame.
@@ -372,9 +447,15 @@ uint32_t opt_keys(uint32_t pressed) {
     prev = pressed;
     hide &= pressed;
     if (sPhase == PAGE_OPEN) {
-        if ((now & K_UP) && sCursor > 0) sCursor--, sSound = 0x3b;
-        if ((now & K_DOWN) && sCursor < NOPT - 1) sCursor++, sSound = 0x3b;
-        if (now & (K_A | K_LEFT | K_RIGHT)) page_toggle(sCursor, (now & K_LEFT) && !(now & (K_A | K_RIGHT)));
+        int rows[MAXROW], n = tab_rows(sTab, rows);
+        if ((now & K_UP) && sCursor >= 0) sCursor--, sSound = 0x3b;
+        if ((now & K_DOWN) && sCursor < n - 1) sCursor++, sSound = 0x3b;
+        if (sCursor < 0) {  // on the tabs: left and right, A or down into the rows
+            if (now & (K_LEFT | K_RIGHT)) page_tab(sTab + (now & K_LEFT ? -1 : 1));
+            else if (now & K_A) sCursor = 0, sSound = 0x3b;
+        } else if (now & (K_A | K_LEFT | K_RIGHT)) {
+            page_toggle(rows[sCursor], (now & K_LEFT) && !(now & (K_A | K_RIGHT)));
+        }
         // as the tabs' menus: B closes the pause menu, L / R go on to the friends / the pockets, Y to the pockets, X the
         // map, Select the chat (their handleTabSwitch)
         if (now & K_B) page_leave(7);
@@ -399,13 +480,17 @@ void opt_touch(int *down, int *x, int *y) {
         prevDown = d;
         if (!d) hide = 0;
         if (sPhase == PAGE_OPEN && newly) {
-            if (tabRow && tx >= 0x35) {  // another tab (MenuTabBar_HitTestTouch's)
+            int rows[MAXROW], n = tab_rows(sTab, rows), xs[MAXTAB + 1];
+            tab_x(xs);
+            if (tabRow && tx >= 0x35) {  // another tab of the pause menu (MenuTabBar_HitTestTouch's)
                 int t = (tx - 0x35) / 0x19;
                 page_leave(t > 7 ? 7 : t);
-            } else if (!tabRow) {
-                for (int i = 0; i < NOPT; i++)
-                    if (tx >= 10 && tx < 246 && ty >= row_y(i) - 1 && ty < row_y(i) + row_step() - 1) sCursor = i, page_toggle(i, 0);
             }
+            // (the page's picture lies on the screen at its own lines: its y is the touch's)
+            for (int t = 0; t < sTabs; t++)
+                if (!tabRow && ty >= TAB_Y - 2 && ty < TAB_Y + 18 && tx >= xs[t] && tx < xs[t + 1] - 3) sCursor = -1, page_tab(t);
+            for (int k = 0; k < n; k++)
+                if (tx >= 10 && tx < 246 && ty >= row_y(k) - 2 && ty < row_y(k) + ROW_STEP - 2) sCursor = k, page_toggle(rows[k], 0);
         }
         // (the tab row left of the pockets' tab but for the button: nothing, but the game would switch to its touch mode)
         if (d && (sPhase != PAGE_NONE || (newly && sMenu.open && tabRow && tx < 0x35 && !(tx >= BTN_X && tx < BTN_X + BTN_W))))
@@ -419,12 +504,11 @@ void opt_touch(int *down, int *x, int *y) {
 // once a frame: the picture redrawn when what it shows changed, and what the host draws given to gpu2d
 static void page_frame(void) {
     init();
-    static unsigned long long sig = ~0ull;
-    unsigned long long now = (unsigned long long)(sMenu.curTab == PORT_OPT_TAB) | (unsigned long long)(sMenu.fontHeader != 0) << 1 |
-                             (unsigned long long)sCursor << 2;
-    for (int i = 0; i < NOPT; i++) now |= (unsigned long long)sVal[i] << (8 + 4 * i);  // (4 bits a row: the choices' values)
-    if (now != sig) {
-        sig = now;
+    static struct { int lit, font, tab, cursor, val[NOPT]; } shown = {-1, 0, 0, 0, {0}};
+    __typeof__(shown) now = {sMenu.curTab == PORT_OPT_TAB, sMenu.fontHeader != 0, sTab, sCursor, {0}};
+    memcpy(now.val, sVal, sizeof now.val);
+    if (memcmp(&now, &shown, sizeof now)) {
+        shown = now;
         draw_picture(sPic[++sSerial & 1]);
     }
     gpu2d_options(sPic[sSerial & 1], sSerial, sMenu.open && sMenu.visible ? page_y() : PH);

@@ -1,0 +1,47 @@
+From: acww-3ds <noreply@invalid>
+Subject: [PATCH] Villagers: "Monkeys move in" (option ACWW_MONKEYS)
+
+From AC:WW+ (github.com/migueliranzo/acww-plus, MIT): Champ, Nana, Simon, Tammi, Monty and Elise (species 0x90-0x95)
+are the only species of move class 2, never chosen. With the option they count as class 0: a new town's residents and
+the move-ins may be them. Both readers of the class go through port_move_class (port_options.h), so the species
+history's reset (SpeciesBits_AllEligibleSet) and the pick (SaveVillagers_PickNewSpecies) agree. Off, the game's.
+---
+ src/main/unk_02077ac4.cpp | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/src/main/unk_02077ac4.cpp b/src/main/unk_02077ac4.cpp
+index d5910fc..9957b9f 100644
+--- a/src/main/unk_02077ac4.cpp
++++ b/src/main/unk_02077ac4.cpp
+@@ -1,4 +1,7 @@
+ #include "ds_div.h"
++#ifdef ENHANCED_PORT
++#include "port_options.h"
++#endif
+ #include "host_labels.h"
+ #include "town/TownBlockMap.h"
+ #include "uptr.h"
+@@ -5890,7 +5893,11 @@ extern "C" BOOL SpeciesBits_AllEligibleSet(u32 *bits) {
+     s32 i;
+     for (i = 0; i < 150; i++) {
+         u8 *p = (u8 *)VillagerInfo_Get((u8)i);
++#ifdef ENHANCED_PORT
++        if (p != NULL && port_move_class(i, p[0x4b]) < 2) {  // ("Monkeys move in", port_options.h)
++#else
+         if (p != NULL && p[0x4b] < 2) {
++#endif
+             if (!SpeciesBits_Test((u8)i, bits)) {
+                 return FALSE;
+             }
+@@ -5926,7 +5933,11 @@ extern "C" s32 SaveVillagers_PickNewSpecies(SaveVillagers *self, u32 idx, s32 fl
+     for (i = 0; i < 0x96; i++) {
+         if (SpeciesBits_Test(i, bits) == 0) {
+             u8 *e = (u8 *)VillagerInfo_Get(i);
++#ifdef ENHANCED_PORT
++            u32 b = port_move_class(i, e[0x4b]);  // ("Monkeys move in", port_options.h)
++#else
+             u32 b = e[0x4b];
++#endif
+             if (b < 2) {
+                 if (flag == 0 || b == 0) {
+                     if (e[0x4a] == idx) {

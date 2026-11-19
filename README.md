@@ -36,10 +36,11 @@ input and system parts.
 | **One screen on the Switch** | The town fills the display in 720p; the touch screen appears as a panel when it has something to show. Six other layouts (side by side, stacked, ...) are a press of the left stick away. |
 | **60 frames a second** | The game draws a 3D picture every third frame; the port draws the pictures in between. The Switch holds 60; on the 3DS it isn't reached everywhere yet. |
 | **Analog stick** | The player walks in any direction, not only the D-pad's eight, and as fast as the Circle Pad or left stick is tilted. |
-| **An options page** | A new tab in the pause menu, left of the pockets: L from the pockets, or touch its button. Its settings are kept in `acww.cfg`. |
+| **An options page** | A new tab in the pause menu, left of the pockets: L from the pockets, or touch its button. Its settings are in three tabs (Screen, Play, Town), each with a line on what it does, and kept in `acww.cfg`. |
 | **Main screen on top** | 3DS: normally you play on the bottom screen, with this option you put your town on the top screen. |
 | **Stacked fruit** | Optional, off by default: up to 9 of a fruit in one pocket slot. |
-| **New Leaf controls** | Optional, off by default: Y picks up items and pulls weeds, B only runs, X opens the pockets. |
+| **New Leaf controls** | Optional, off by default: Y picks up items and pulls weeds, B only runs, X opens the pockets, the D-pad's left and right swap tools. |
+| **More from AC:WW+** | Optional, each off by default, from [AC:WW+](https://github.com/migueliranzo/acww-plus): Bell bags that stack in the pockets, trees shaken with the net or the fishing rod, several items for Blathers at once, Nookington's and Nook's sales without a second player, and the monkeys (Champ, Nana, Simon, Tammi, Monty, Elise) moving in. |
 | **Other languages** | English, French, German, Italian or Spanish text, taken from your own copy of the European version. Only German has been tested so far. |
 | **Built from your own cartridge** | The game's data comes from your own dump. No game content is distributed. |
 
@@ -147,7 +148,12 @@ lines that can also be edited by hand:
 | `ACWW_SWITCH_SCALE` | `3` | Switch: the resolution, `1` to `4` times the 3DS's (`3`: 720p; after a restart) |
 | `ACWW_MAIN_TOP` | `0` | 3DS: the town and the rooms always on the upper screen: the pause menu opens and closes on the lower screen alone, over the sky (the touch screen then shows the sky and takes no touches there) |
 | `ACWW_STACK_FRUIT` | `0` | stacked fruit |
-| `ACWW_NL_CONTROLS` | `0` | New Leaf controls: Y picks up items and pulls weeds, B only runs, X opens the pockets instead of the map |
+| `ACWW_NL_CONTROLS` | `0` | New Leaf controls: Y picks up items and pulls weeds, B only runs, X opens the pockets instead of the map, the D-pad's left and right swap tools (right: the next tool from the pockets; left: put away, or take the last one out again) |
+| `ACWW_BELL_STACK` | `0` | a Bell bag picked up joins a bag in the pockets when the two make a bag (100 to 900, then thousands to 99,000) |
+| `ACWW_TOOL_SHAKE` | `0` | A with the fishing rod, or the net with no bug near, shakes the tree ahead |
+| `ACWW_MUSEUM_BULK` | `0` | in Blathers' item list X marks items; he takes them one after another |
+| `ACWW_NOOK_SOLO` | `0` | Nookington's without a visitor's purchase; Nook's sale days, evening sales and spotlight items with one resident |
+| `ACWW_MONKEYS` | `0` | Champ, Nana, Simon, Tammi, Monty and Elise can be new residents |
 | `ACWW_ANALOG` | `1` | the Circle Pad's angle and tilt (`0`: the D-pad's eight directions) |
 | `ACWW_FRAMESKIP` | `0` | 3DS: `auto`: pictures are left out when the console can't keep the game's pace |
 | `ACWW_LANG` | | `ENG`, `FRN`, `GER`, `ITA` or `SPN`: that language's text... |

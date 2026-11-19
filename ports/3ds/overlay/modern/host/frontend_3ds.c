@@ -12,6 +12,7 @@
 
 #include "frontend.h"
 #include "pica_display.h"
+#include "host_input.h"
 
 int render_presenting(void);  // (render.h: not includable beside libctru, whose u32 differs from host.h's)
 void pxi7_save_flush(void);   // (pxi7.c)
@@ -146,6 +147,7 @@ void frontend_backend_frame(AcwwShm *shm) {
     u32 k = hidKeysHeld();
     // frontend.h's bits are the 3DS's (and the DS's) first 12: A B Select Start Right Left Up Down R L X Y
     uint32_t keys = k & 0xfff;
+    gHostDpad = (unsigned char)(k & 0xf0);  // (KEY_DRIGHT .. KEY_DDOWN: the D-pad alone, host_input.h)
     if (k & KEY_CPAD_RIGHT) keys |= KEY_DRIGHT;
     if (k & KEY_CPAD_LEFT) keys |= KEY_DLEFT;
     if (k & KEY_CPAD_UP) keys |= KEY_DUP;

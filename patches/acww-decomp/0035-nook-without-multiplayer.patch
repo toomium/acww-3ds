@@ -1,0 +1,48 @@
+From: acww-3ds <noreply@invalid>
+Subject: [PATCH] Nook's: "Nook's without multiplayer" (option
+ ACWW_NOOK_SOLO)
+
+From AC:WW+ (github.com/migueliranzo/acww-plus, MIT). Nookway becomes Nookington's only after a visitor from another
+town bought something (save flag 7, NookShop_HasVisitorBought); with the option the sales alone do it
+(NookShop_GetEarnedLevel, whose callers schedule the remodel). And NookShop_UpdateDaily rolls the sale day, the
+evening sale and the spotlight item only in towns of two or more residents; with the option one is enough. The other
+condition stays: a resident who finished Nook's part-time job (player flag 1 clear). Off, the game's.
+---
+ src/main/unk_020ac750.cpp | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/src/main/unk_020ac750.cpp b/src/main/unk_020ac750.cpp
+index da04680..6c421e1 100644
+--- a/src/main/unk_020ac750.cpp
++++ b/src/main/unk_020ac750.cpp
+@@ -1,4 +1,7 @@
+ #include "uptr.h"
++#ifdef ENHANCED_PORT
++#include "port_options.h"
++#endif
+ #include "host_labels.h"
+ // mwcc-flags: -str reuse
+ #include "types.h"
+@@ -892,6 +895,9 @@ extern "C" int NookShop_GetEarnedLevel(NookShop *self) {
+     if (self->sales >= NookShop_GetUpgradeSales(self, t)) {
+         int r = NookShop_HasVisitorBought(&data_021ed104);
+         if (t == 2) {
++#ifdef ENHANCED_PORT
++            if (port_nook_solo()) r = 1;  // ("Nook's without multiplayer": no visitor's purchase needed)
++#endif
+             if (r != 0) return t + 1;
+         } else {
+             return t + 1;
+@@ -1017,7 +1023,12 @@ extern "C" void NookShop_UpdateDaily(NookShop *self, int force) {
+     NookShop_Restock(self, d.year, d.month, d.day);
+     ok = 1;
+     int cnt = PlayerDataArray_CountUsed(gSavePlayers);
++#ifdef ENHANCED_PORT
++    // ("Nook's without multiplayer": one resident is enough; one who finished Nook's part-time job is still needed)
++    if (cnt != 0 && (cnt != 1 || port_nook_solo())) {
++#else
+     if (cnt != 0 && cnt != 1) {
++#endif
+         for (i = 0; i < 4; i++) {
+             p = PlayerData_GetResident(gSavePlayers, i);
+             if (p != 0 && ((PlayerData *)(p))->isUsed() != 0 && ((PlayerData *)(p))->testFlag(1) == 0) {

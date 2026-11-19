@@ -17,7 +17,8 @@ int port_stack_fruit(void);
 int port_main_top(void);
 // the pause menu opening or closing that way (src/main/unk_0206db88.cpp): taken when it starts opening
 int port_menu_on_sub(void);
-// the pocket a fruit (*item, as picked up) joins: a stack or single fruit of its kind with room, not flagged; -1 none,
+// the pocket a fruit (*item, as picked up) joins: a stack or single fruit of its kind with room, not flagged (or a Bell
+// bag: the bag it adds up with, "Bell bags stack"); -1 none,
 // or stacking off, or online (src/main/unk_02098e90.cpp)
 int Pocket_FindFruitStack(unsigned short *item);
 // a stack's icon (the icon pages' src: the top tiles at src, the bottom at +0x400) with its count drawn in; src itself
@@ -34,6 +35,44 @@ int port_new_leaf_controls(void);
 int port_wide_ranges(void);
 static inline unsigned port_key_pick_up(void) { return port_new_leaf_controls() ? 0x800 : 0x2; }   // Y : B
 static inline unsigned port_key_pockets(void) { return port_new_leaf_controls() ? 0x400 : 0x800; } // X : Y
+
+// The enhancements taken from AC:WW+ (github.com/migueliranzo/acww-plus, MIT), each an option, off by default.
+// "Monkeys move in": Champ, Nana, Simon, Tammi, Monty and Elise (species 0x90-0x95, the only ones of the never chosen
+// move class 2) may be a new town's residents or move in, as class 0 (src/main/unk_02077ac4.cpp)
+int port_monkeys(void);
+static inline unsigned port_move_class(unsigned species, unsigned c) {
+    return c == 2 && species >= 0x90 && species <= 0x95 && port_monkeys() ? 0 : c;
+}
+// "Nook's without multiplayer": Nookington's without a visitor's purchase, and the sale days, evening sales and
+// spotlight items with one resident (src/main/unk_020ac750.cpp)
+int port_nook_solo(void);
+// "Shake trees with tools": A with the fishing rod, or the net when no bug is near, shakes the tree ahead
+// (src/ov003/unk_ov003_02204ce8.cpp)
+int port_tool_shake(void);
+// "Bell bags stack": a Bell bag picked up joins a pocket's bag when the two make a bag (Pocket_FindFruitStack)
+int port_bell_stack(void);
+static inline int port_bag_bells(unsigned v) {  // a Bell bag's Bells (0: no bag): 100-900, then 1,000-99,000
+    return v < 0x1492 || v > 0x14fd ? 0 : v - 0x1492 < 9 ? (int)(v - 0x1492 + 1) * 100 : (int)(v - 0x1492 - 8) * 1000;
+}
+static inline unsigned short port_bag_of(int bells) {  // the bag of these Bells (0: there is none)
+    return (unsigned short)(bells > 0 && bells <= 900 && bells % 100 == 0 ? 0x1492 + bells / 100 - 1 :
+                            bells >= 1000 && bells <= 99000 && bells % 1000 == 0 ? 0x1492 + 8 + bells / 1000 : 0);
+}
+// "Several items for Blathers": in his item picker X marks pockets; each time he would open it again the next marked
+// one is handed to him (modern/port/museum_bulk.cpp; src/ov047, src/ov101)
+int port_museum_bulk(void);
+int Port_MuseumPickerOpen(void);                // his picker is open: X marks (ov101 PocketItemSelectMenu::mainAct06)
+void Port_MuseumMark(int slot, unsigned *bits);  // X on pocket slot: marked or unmarked (bits: the grid's ring marks)
+void Port_MuseumPicked(int slot, unsigned *bits);  // A on slot: no mark any more (the game takes it)
+int Port_MuseumNext(void);    // he would open the picker: 1 with the next marked slot as the menu's result instead, else
+                              // 0 (the picker opens, X marks in it)
+void Port_MuseumOpened(int ok);  // what he got from the picker (ok: an item picked; else the marks dropped)
+void Port_MuseumReset(void);                    // a new conversation: the marks dropped
+// "New Leaf controls" also swap tools with the D-pad's left and right (modern/port/tool_swap.cpp)
+int Port_ToolSwapTick(void);          // the local player standing (PlayerActor::waitCheckInput): 1 if a swap started
+int Port_ToolSwapEquipping(void);     // a swap's equip ends (action 5): back to standing, then Port_ToolSwapEquipped
+void Port_ToolSwapEquipped(void);
+unsigned port_dpad_lr_held(void);     // the D-pad's left / right held while they are the tools': not for walking
 
 #ifdef __cplusplus
 }
