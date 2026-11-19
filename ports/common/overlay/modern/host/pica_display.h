@@ -36,6 +36,8 @@ void pdisp_idle(void);
 // GSP for the GPU's renderers (gspInit, counted), and before the program ends (the frontend, before gfxExit):
 // citro3d ended and those references given back, so that gfxExit's gspExit stops GSP's event thread
 void pdisp_gsp_init(void);
+// the 3DS: the data cache over [p, p + size) written back for the GPU (pica_display.c: by the kernel, not the GSP)
+void pdisp_flush(const void *p, uint32_t size);
 void pdisp_quit(void);
 extern volatile int *gPicaProf;
 // the Switch (gl_display.c): both screens shown in the window (the frontend, each frame); a point of the window

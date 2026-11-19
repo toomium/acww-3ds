@@ -146,6 +146,22 @@ static void wait_done(int last, int kind, int older) {
 }
 void pdisp_wait(int kind, int older) { wait_done(0, kind, older); }
 static void frame_close(void);
+// The data cache written back so that the GPU reads what the CPU wrote: by the kernel on the calling core
+// (svcStoreProcessDataCache), not by GSPGPU_FlushDataCache, a request to the system's GPU service on core 1, where
+// the sound's thread is too (old3ds-test 78: the two backdrop textures' flushes, 8 KB each, 0.67 ms a composited
+// frame, the vertices' 0.60). ACWW_PICA_FLUSH=0: the GSP's, as before; so too if the kernel refuses (logged once).
+void pdisp_flush(const void *p, u32 size) {
+    static int mode = -1;
+    if (mode < 0) mode = !getenv("ACWW_PICA_FLUSH") || atoi(getenv("ACWW_PICA_FLUSH"));
+    if (mode && size) {
+        Result r = svcStoreProcessDataCache(CUR_PROCESS_HANDLE, (u32)p, size);
+        if (R_SUCCEEDED(r)) return;
+        fprintf(stderr, "pica: svcStoreProcessDataCache: %08lx; the GSP flushes the data cache\n", (unsigned long)r);
+        mode = 0;
+    }
+    GSPGPU_FlushDataCache(p, size);
+}
+static void tex_flush(C3D_Tex *t) { pdisp_flush(t->data, C3D_TexCalcTotalSize(t->size, t->maxLevel)); }
 // ACWW_PICA_TIMES=1: the wall-clock time of the compositing's calls that go through the GSP (the system's GPU service,
 // on core 1 beside the sound), ms a composited frame and calls, every 120 composited frames. The ACWW_FPS profile's
 // sampler runs on core 1 too, so its parts can't show this (old3ds-test 77: compose 0.76 ms less, the compositing's
@@ -282,7 +298,7 @@ void pdisp_frame_run(void) {
     // (frame_flush_commands, frame_close)
     u32 *start = gpuCmdBuf;
     C3D_FrameSplit(0);
-    GSPGPU_FlushDataCache(start, (u32)(gpuCmdBuf - start) * 4);
+    pdisp_flush(start, (u32)(gpuCmdBuf - start) * 4);
     gxCmdQueueRun((gxCmdQueue_s *)__C3D_Context);
     sRunning = 1;
     sMerged++;
@@ -427,11 +443,11 @@ void *cg_tex_texels(CgTex *t) { return t->staged ? t->stage.data : t->tex.data; 
 void cg_tex_written(CgTex *t) {
     if (!t->staged) {
         u64 t0 = times_now();
-        C3D_TexFlush(&t->tex);
+        tex_flush(&t->tex);
         times_add(PT_WRITTEN, t0);
         return;
     }
-    C3D_TexFlush(&t->stage);  // (the GPU copies it to VRAM: C3D_SyncTextureCopy)
+    tex_flush(&t->stage);  // (the GPU copies it to VRAM: C3D_SyncTextureCopy)
     if (sRunning && gpuCmdBufOffset) frame_stop();  // (it queues the commands before it unflushed: frame_stop)
     C3D_TexLoadImage(&t->tex, t->stage.data, GPU_TEXFACE_2D, 0);
 }
@@ -443,7 +459,7 @@ void cg_tex_upload(CgTex *t, const void *src, int w, int rows, int fmt) {
     GX_TRANSFER_FORMAT f = fmt == CG_RGBA5551 ? GX_TRANSFER_FMT_RGB5A1 : GX_TRANSFER_FMT_RGBA8;
     u32 dim = GX_BUFFER_DIM(w, rows);
     u64 t0 = times_now();
-    GSPGPU_FlushDataCache(src, (u32)(w * rows * (fmt == CG_RGBA5551 ? 2 : 4)));
+    pdisp_flush(src, (u32)(w * rows * (fmt == CG_RGBA5551 ? 2 : 4)));
     frame_flush_commands();
     HOST_PROF_ON(gPicaProf, PROF_UPLOAD);
     C3D_SyncDisplayTransfer((u32 *)src, dim, t->tex.data, dim, kLinearToTiled | GX_TRANSFER_IN_FORMAT(f) | GX_TRANSFER_OUT_FORMAT(f));
@@ -546,7 +562,7 @@ void cg_draw_begin(void) {
 }
 void cg_frame_end(int nverts) {
     u64 t0 = times_now();
-    GSPGPU_FlushDataCache(sV, (u32)nverts * sizeof(CgVertex));
+    pdisp_flush(sV, (u32)nverts * sizeof(CgVertex));
     times_add(PT_FLUSH, t0);
     frame_close();
     times_add(PT_JOB, sTimeJob);

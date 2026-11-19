@@ -181,7 +181,7 @@ static C3D_Tex *texture(u32 tp, u32 tpal) {
     g3_texture_rgba(tp, tpal, rgba);
     tile(rgba, e->tex.data, w, h, half16(tp));
     free(rgba);
-    C3D_TexFlush(&e->tex);
+    pdisp_flush(e->tex.data, C3D_TexCalcTotalSize(e->tex.size, e->tex.maxLevel));  // (pica_display.c: not the GSP's)
     if (is4x4) {
         palette_4x4(tp, tpal, &e->palLo, &e->palLen);
         u32 p = newest(sPalVer, PAL_SIZE, e->palLo, e->palLen);
@@ -555,8 +555,8 @@ static void render(const G3RenderState *r, void *vertices, u32 *color, u32 *dept
         int listState = 0;
         static u32 flushedV, flushedI;
         u32 gv = sGvN, gi = sGiN;
-        if (gv > flushedV) GSPGPU_FlushDataCache(sGv, gv * sizeof *sGv), flushedV = gv;
-        if (gi > flushedI) GSPGPU_FlushDataCache(sGi, gi * sizeof *sGi), flushedI = gi;
+        if (gv > flushedV) pdisp_flush(sGv, gv * sizeof *sGv), flushedV = gv;
+        if (gi > flushedI) pdisp_flush(sGi, gi * sizeof *sGi), flushedI = gi;
         for (int pass = 0; pass < 2; pass++)  // (opaque, then translucent)
             for (int k = 0; k < l->nbatch; k++) {
                 const Batch *b = &l->batch[k];
@@ -652,7 +652,7 @@ static void render(const G3RenderState *r, void *vertices, u32 *color, u32 *dept
                 ticks = 0, total = 0;
             }
         }
-        GSPGPU_FlushDataCache(vb, (u32)l->nv * sizeof(PVertex));
+        pdisp_flush(vb, (u32)l->nv * sizeof(PVertex));
     }
 #else
     const float hy = direct ? 256.0f : (float)H;  // (the texture's rows: lines below 192 aren't drawn)
@@ -702,7 +702,7 @@ static void render(const G3RenderState *r, void *vertices, u32 *color, u32 *dept
         for (int i = 1; i + 1 < p->nv; i++) sVerts[nv++] = pv[0], sVerts[nv++] = pv[i], sVerts[nv++] = pv[i + 1];
     }
     if (nv > first) C3D_DrawArrays(GPU_TRIANGLES, first, nv - first);
-    GSPGPU_FlushDataCache(sVerts, (u32)nv * sizeof(PVertex));
+    pdisp_flush(sVerts, (u32)nv * sizeof(PVertex));
 #endif
     if (direct) {  // (the GPU draws while the CPU goes on, the compositing in the same frame)
         pdisp_frame_run();
