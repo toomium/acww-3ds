@@ -1,0 +1,101 @@
+From ba39e79d5368dab4ed5517eed5f5d9240effdb08 Mon Sep 17 00:00:00 2001
+From: toomium <tom.mittendorf@web.de>
+Date: Thu, 19 Nov 2026 18:09:17 +0100
+Subject: [PATCH] Profile: the ports' 2D in more parts (sprites, layers
+ compared, 2D record, compose)
+
+ACWW_FPS's profile had the 2D's work in three parts, 2D (the record), 2D layers and compositing. Four more, so that
+the console shows where it goes: sprites (gpu2d_obj_sprites), layers compared (layers_keep, cpu_bg), 2D record (the
+record's start and end) and compose (comp2d.c's quads). The Old 3DS (old3ds-test 75, frames 3720-8400): layers
+compared 1.78, compose 2.41, 2D record 0.70, sprites 0.47 ms a frame.
+---
+ modern/host/gpu2d/gpu2d.c | 22 +++++++++++++++++++---
+ modern/host/hw.c          |  3 ++-
+ 2 files changed, 21 insertions(+), 4 deletions(-)
+
+diff --git a/modern/host/gpu2d/gpu2d.c b/modern/host/gpu2d/gpu2d.c
+index c8121aa..1091d93 100644
+--- a/modern/host/gpu2d/gpu2d.c
++++ b/modern/host/gpu2d/gpu2d.c
+@@ -9,6 +9,10 @@
+ #include <stdlib.h>
+ 
+ #include "gpu2d_internal.h"
++#include "../prof.h"
++#ifdef ENHANCED_PORT
++extern volatile int *gPicaProf;  // (pica_display.c, gl_display.c: the profile marker of the thread that composites)
++#endif
+ 
+ static Engine sEngine[2];
+ static u16 sPowCnt;       // POWCNT1
+@@ -951,6 +955,7 @@ void gpu2d_draw_layers(int record) {
+     static Gpu2dLineState was[2][192];
+     static u8 wasPrio[2][192];
+     for (int n = 0; n < 2 && sKeepOn; n++) {
++        HOST_PROF_ON(gPicaProf, PROF_KEEP);
+         keep[n] = layers_keep(r, &sRecord[record ^ 1], n);
+         sKept[n] += (unsigned long)keep[n];
+         if (keep[n] && sKeepCheck)
+@@ -977,8 +982,12 @@ void gpu2d_draw_layers(int record) {
+             d->powcnt = (u16)l[G2L_POWCNT];
+             d->palette = (const u8 *)work + 0x400 * n;
+             d->oam = (const u8 *)(work + 0x200) + 0x400 * n;
+-            if (line == 0 && sLayers->sprite)
++            if (line == 0 && sLayers->sprite) {
++#ifdef ENHANCED_PORT
++                HOST_PROF_ON(gPicaProf, PROF_SPRITES);
++#endif
+                 sLayers->nsprites[n] = gpu2d_obj_sprites(d, sLayers->sprites[n], sLayers->sprite, &ax, &ay, &rowH);
++            }
+             if (sLayers->sprite) {}  // (the sprites instead)
+             else if (line == 0 && r->haveObj0[n]) d->obj = r->obj0[n];
+             else if (line == 0) memset(&d->obj, 0, sizeof d->obj);
+@@ -991,7 +1000,10 @@ void gpu2d_draw_layers(int record) {
+     }
+ #ifdef ENHANCED_PORT
+     for (int n = 0; n < 2; n++)
+-        if (!keep[n]) sCpuBg[n] = cpu_bg(r, n);
++        if (!keep[n]) {
++            HOST_PROF_ON(gPicaProf, PROF_KEEP);
++            sCpuBg[n] = cpu_bg(r, n);
++        }
+     for (int n = 0; n < 2; n++) {
+         if (!check[n]) continue;
+         for (int y = 0; y < SCREEN_H; y++)
+@@ -1014,7 +1026,10 @@ void gpu2d_render_frame(const Gpu2dFrameInput *in) {
+     sLayers = in->layers;
+     sDeferLayers = sLayers && in->deferLayers;
+     map_vram(in);
+-    if (sDeferLayers) record_start(in);
++    if (sDeferLayers) {
++        HOST_PROF(PROF_RECORD);
++        record_start(in);
++    }
+     if (sGpu) {
+         gpu_tables(in);
+         sGpuFrame.palettes = sPalettes[0];
+@@ -1078,6 +1093,7 @@ void gpu2d_render_frame(const Gpu2dFrameInput *in) {
+     }
+     // to the screens: engine A on the top screen if POWCNT1 bit 15 is set
+     if (sDeferLayers) {  // (the layers' own fields too: gpu2d_draw_layers)
++        HOST_PROF(PROF_RECORD);
+         record_end(in);
+         sFrame++;
+         return;
+diff --git a/modern/host/hw.c b/modern/host/hw.c
+index 36c36a5..f7e7134 100644
+--- a/modern/host/hw.c
++++ b/modern/host/hw.c
+@@ -132,7 +132,8 @@ static const char *const kProfNames[PROF_N] = {"game", "registers", "DMA", "geom
+                                                "sound", "frontend", "pacing", "GPU wait", "lighting",
+                                                "vertices", "waiting for the GPU thread", "idle", "ROM",
+                                                "ARM7", "uploads", "VRAM", "BG tiles", "screen hash", "frame end",
+-                                               "2D layers", "matrices", "polygons", "fog"};
++                                               "2D layers", "matrices", "polygons", "fog",
++                                               "sprites", "layers compared", "2D record", "compose"};
+ // the slowest frame of the 120: the parts the sampler saw in it (milliseconds), the game's thread and the GPU thread
+ static u32 sProfAt[2][PROF_N], sProfSlowest[2][PROF_N];
+ static void prof_frame(int slowest) {
+-- 
+2.43.0
+

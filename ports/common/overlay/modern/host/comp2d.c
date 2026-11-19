@@ -830,6 +830,7 @@ static int margins_3d(void) {
 
 // an engine's picture, group by group of lines with the same GPU state, in pieces of lines with the same state
 static void compose(int e) {
+    HOST_PROF_ON(gPicaProf, PROF_COMPOSE);
     static Group g;
     g.engine = e, g.n = 0, g.s = &sLayers.line[e][0];
     for (int y0 = 0, y1; y0 < H; y0 = y1) {

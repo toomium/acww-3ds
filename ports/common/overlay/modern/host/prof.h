@@ -20,6 +20,9 @@ enum {
     PROF_LAYERS,  // (the 3DS: the 2D renderer's layers drawn from its record, gpu2d_draw_layers)
     PROF_MTX, PROF_POLY,  // the geometry engine's matrix commands and clip matrix, its polygons' set-up (gpu3d_geom.c)
     PROF_FOG,  // (the 3DS: the fog worked into the 3D picture's vertices, gpu3d_pica.c)
+    // (the ports' 2D: the sprites made, the layers compared with the frame before's, gpu2d_draw_layers; the record's
+    // start and end, gpu2d_render_frame; the layers' quads, comp2d.c compose)
+    PROF_SPRITES, PROF_KEEP, PROF_RECORD, PROF_COMPOSE,
     PROF_N
 };
 extern volatile int gHostProf;
