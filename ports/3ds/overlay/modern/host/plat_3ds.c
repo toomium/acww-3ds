@@ -137,6 +137,11 @@ void host_plat_init(void) {
 #ifdef ENHANCED_PORT  // (the pictures between cost an Old 3DS about 17 ms a frame: off unless acww.cfg says)
     if (!n3ds) setenv("ACWW_PICA_INTERP", "0", 0);
     if (!n3ds) setenv("ACWW_WIDE_RANGES", "0", 0);  // (the wide view's longer ranges: 2-4 fps on an Old 3DS)
+    // the game's display lists drawn by the GPU on both models (gpu3d_geom_list.h): the user's Old 3DS, 2026-11-17,
+    // fps standing / walking / end 38.3 / 38.9 / 34.3 against 34.0 / 34.6 / 29.3 (old3ds-test 46 against 45).
+    // (ACWW_FRAMESKIP=sync and ACWW_WIDE=0 are not the Old 3DS's defaults: sync leaves out pictures that change,
+    // and the wide screens off were slower, 33.2 against 34.8, 48 against 47)
+    setenv("ACWW_G3D_GPU", "1", 0);
 #endif
     osSetSpeedupEnable(true);  // (the New 3DS: 804 MHz and its L2 cache instead of 268 MHz; nothing on the others)
     fprintf(stderr, "3ds: %s, application memory %lu KB (%lu KB free), heap %lu KB, linear heap %lu KB\n",

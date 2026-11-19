@@ -52,9 +52,13 @@ input and system parts.
 | Wide screens, the options page, the analog stick | 60 frames a second everywhere on the 3DS; a HOME Menu version (`.cia`: the web builder puts the icon from your ROM on it; the banner is a placeholder) | |
 | Sound, the save file, the touch screen | Languages other than German tested | |
 
-On an **Old 3DS** the game currently runs at about three fifths of its speed in
-town. `ACWW_FRAMESKIP=auto` in `acww.cfg` lets it leave pictures out to keep the
-game's pace; making it faster is what is being worked on.
+On an **Old 3DS** the game ran at about three fifths of its speed in town
+(34 of 60 frames a second, measured on the console). The game's display lists
+are now drawn by the GPU by default (`ACWW_G3D_GPU=1`: 38 frames a second
+in the same run) and the 2D renderer reads VRAM without copying it.
+`ACWW_FRAMESKIP=sync` draws the screens only when the game has a new picture,
+`ACWW_FRAMESKIP=auto` leaves pictures out only when the game falls behind; both
+are off by default. Making it faster is what is being worked on.
 
 > [!IMPORTANT]
 > **This repository contains no game content.** No ROM, graphics, music,
@@ -141,7 +145,7 @@ lines that can also be edited by hand:
 
 | Option | Default | Meaning |
 | :--- | :--- | :--- |
-| `ACWW_PICA_INTERP` | `1` | 60 frames a second: the pictures between the game's |
+| `ACWW_PICA_INTERP` | `1` (Old 3DS: `0`) | 60 frames a second: the pictures between the game's |
 | `ACWW_WIDE` | `1` | the wide screens (after a restart) |
 | `ACWW_LAYOUT` | `0` | Switch: the screen layout, `0` one screen to `6` |
 | `ACWW_SWITCH_SCALE` | `3` | Switch: the resolution, `1` to `4` times the 3DS's (`3`: 720p; after a restart) |
@@ -149,7 +153,7 @@ lines that can also be edited by hand:
 | `ACWW_STACK_FRUIT` | `0` | stacked fruit |
 | `ACWW_NL_CONTROLS` | `0` | New Leaf controls: Y picks up items and pulls weeds, B only runs, X opens the pockets instead of the map |
 | `ACWW_ANALOG` | `1` | the Circle Pad's angle and tilt (`0`: the D-pad's eight directions) |
-| `ACWW_FRAMESKIP` | `0` | 3DS: `auto`: pictures are left out when the console can't keep the game's pace |
+| `ACWW_FRAMESKIP` | `0` | 3DS: `sync`: the screens are drawn only when the game has a new picture (not with `ACWW_PICA_INTERP=1`, whose pictures between need every frame); `auto`: pictures are left out when the console can't keep the game's pace |
 | `ACWW_LANG` | | `ENG`, `FRN`, `GER`, `ITA` or `SPN`: that language's text... |
 | `ACWW_LANG_ROM` | | ...from the European ROM (`ADMP`) at this path, e.g. `sdmc:/3ds/acww/eur.nds` |
 

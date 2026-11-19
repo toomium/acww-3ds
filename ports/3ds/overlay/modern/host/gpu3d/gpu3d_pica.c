@@ -336,6 +336,7 @@ static void *prepare(const G3RenderState *r, const u8 *img, const u8 *pal, int t
 // for the compositing (color NULL): a job for the GPU thread (pica_display.c), which reads the list and the textures
 // until the game's thread waits for it, into the picture chosen here (sPicture: the compositing jobs submitted
 // before it show the other one); read back: at once
+static s64 sGpuT = 0x10000;  // (the port: where this picture is between the pair, as replay's t: the GPU's draws)
 static struct {
     const G3RenderState *r;
     const u8 *img, *pal;
@@ -387,9 +388,10 @@ static void *prepare(const G3RenderState *r, const u8 *img, const u8 *pal, int t
     HostProfSaved replayProf = {gPicaProf, *gPicaProf};  // (the profile: "vertices", the pairs and the replay)
     *gPicaProf = PROF_VERTEX;
     if (direct && sJob.prev >= 0) pair(l, &sList[sJob.prev]);
+    sGpuT = 0x10000;
     if (direct && sJob.den && sReplay[0]) {  // (a picture between the game's)
         vb = sReplay[sReplayBuf ^= 1];
-        replay(l, ((s64)sJob.num << 16) / sJob.den, vb);
+        replay(l, sGpuT = ((s64)sJob.num << 16) / sJob.den, vb);
     } else if (check && sReplay[0] && l->recorded) {
         vb = sReplay[sReplayBuf ^= 1];
         differ += (unsigned)replay(l, 0x10000, vb);
@@ -402,7 +404,9 @@ static void *prepare(const G3RenderState *r, const u8 *img, const u8 *pal, int t
         HOST_PROF_ON(gPicaProf, PROF_FOG);
         for (int k = 0; k < l->nbatch; k++) {
             const Batch *b = &l->batch[k];
-            if (!(b->attr & 0x8000)) continue;
+            // (a display list's draw: first and count are indices into sGi, not vertices here. shortcut: its polygons
+            // get no fog in their alpha; the vertex shader would have to work it out from the depth)
+            if (!(b->attr & 0x8000) || b->gpu) continue;
             u32 pa = b->attr >> 16 & 31, a = pa ? pa : 31;
             for (PVertex *o = vb + b->first, *e = o + b->count; o < e; o++) {
                 float z = b->wbuffer ? -o->pos[2] : -o->pos[2] / o->pos[3];
@@ -572,6 +576,19 @@ static void render(const G3RenderState *r, void *vertices, u32 *color, u32 *dept
                 if (b->gpu) {
                     const G3GDraw *g = &l->draw[b->gpu - 1];
                     const float *c = g->clip, eq = depth_eq(b->attr);
+                    float moved[16];
+                    if (sGpuT < 0x10000 && b->seg != NO_SEG) {  // (a picture between: the matrix moved as replay's
+                        const Seg *sg = &l->seg[b->seg];        // positions, the same transform as dl_piece_gpu's)
+                        if (memcmp(sg->m, sg->m0, sizeof sg->m)) {
+                            s32 m[16];
+                            for (int i = 0; i < 16; i++) m[i] = sg->m0[i] + (s32)(((s64)(sg->m[i] - sg->m0[i]) * sGpuT) >> 16);
+                            for (int i = 0; i < 4; i++) {
+                                for (int j = 0; j < 3; j++) moved[4 * i + j] = (float)m[4 * j + i] * (1 / 16777216.0f);
+                                moved[4 * i + 3] = (float)m[12 + i] * (1 / 4096.0f);
+                            }
+                            c = moved;
+                        }
+                    }
                     if (!listState) C3D_SetAttrInfo(&aiList), C3D_SetBufInfo(&biList), listState = 1;
                     // (clip_pos and `target` in one matrix: the viewport, the picture, the depth. The W-buffer's
                     // is w itself; not limited to 1 as clip_pos does: beyond the far plane only)

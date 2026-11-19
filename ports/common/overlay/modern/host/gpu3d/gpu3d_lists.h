@@ -22,6 +22,7 @@ typedef struct {
     int first, count;  // its vertices in the list
     float vx[2], vy[2];  // its viewport (sVx, sVy)
     int gpu;  // a display list's draw (g3p_gpu_draw): its number in the list's draws + 1; first, count: its indices
+    u16 seg;  // such a draw's clip matrix in the list's Segs (g3p_gpu_seg; NO_SEG: none, drawn as made)
 } Batch;
 typedef struct {
     s32 obj[3];
@@ -120,6 +121,7 @@ static int replay(const List *l, s64 t, PVertex *out) {
     int differ = 0;
     for (int k = 0; k < l->nbatch; k++) {
         const Batch *b = &l->batch[k];
+        if (b->gpu) continue;  // (its indices, not vertices: render() moves its matrix instead, sGpuT)
         float eq = depth_eq(b->attr);
         // (the last three vertices made: a polygon's triangles share its first vertex and an edge, and polygons in a
         // row share vertices; the same object coordinates and matrix give the same position)
@@ -267,7 +269,7 @@ static Batch *choose_batch(List *l, u32 attr, u32 texparam, u32 texpal, int tran
         memcmp(b->vx, sVx, sizeof sVx) || memcmp(b->vy, sVy, sizeof sVy)) {
         b = &l->batch[l->nbatch++];
         b->attr = attr, b->texparam = texparam, b->texpal = texpal, b->trans = (u8)translucent;
-        b->wbuffer = (u8)wbuffer, b->first = l->nv, b->count = 0, b->gpu = 0;
+        b->wbuffer = (u8)wbuffer, b->first = l->nv, b->count = 0, b->gpu = 0, b->seg = NO_SEG;
         memcpy(b->vx, sVx, sizeof sVx), memcpy(b->vy, sVy, sizeof sVy);
     }
     return b;
@@ -307,12 +309,16 @@ void g3p_polygon(G3Vertex *const *v, int n, u32 attr, u32 texparam, u32 texpal, 
 // their numbers in the list, then each polygon takes its vertices from there (as g3p_polygon, for a list that isn't
 // recorded)
 static PVertex *sLpv;
+static Rec *sLrec;  // (a recorded list's: each vertex's object coordinates and matrix, for g3p_list_polygon)
 static u32 sLpvN;
 int g3p_list_begin(u32 n) {
     if (n > sLpvN) {
         PVertex *p = realloc(sLpv, (size_t)n * sizeof *p);
         if (!p) return 0;
-        sLpv = p, sLpvN = n;
+        sLpv = p;
+        Rec *r = realloc(sLrec, (size_t)n * sizeof *r);
+        if (!r) return 0;
+        sLrec = r, sLpvN = n;
     }
     return 1;
 }
@@ -327,6 +333,13 @@ void g3p_list_vertices(u32 first, const G3LVertex *v, u32 n, u32 attr, int wbuff
         o->col[3] = alpha;
         o->tc[0] = v[i].tex[0], o->tc[1] = v[i].tex[1];
     }
+    if (!sList[sFill].recorded) return;
+    for (u32 i = 0; i < n; i++) {  // (as gpu3d_geom.c's vertices: what identifies its matrix, then the record)
+        Rec *r = &sLrec[first + i];
+        for (int c = 0; c < 3; c++) r->obj[c] = v[i].obj[c];
+        r->seg = v[i].seg;
+        g3p_vertex(r->seg, r->obj);
+    }
 }
 void g3p_list_polygon(const u32 *idx, int n, u32 attr, u32 texparam, u32 texpal, int translucent, int wbuffer) {
     List *l = &sList[sFill];
@@ -335,6 +348,8 @@ void g3p_list_polygon(const u32 *idx, int n, u32 attr, u32 texparam, u32 texpal,
     Batch *b = choose_batch(l, attr, texparam, texpal, translucent, wbuffer);
     PVertex *out = l->v + l->nv;
     for (int i = 1; i + 1 < n; i++) *out++ = sLpv[idx[0]], *out++ = sLpv[idx[i]], *out++ = sLpv[idx[i + 1]];
+    Rec *ro = l->rec + l->nv;
+    for (int i = 1; i + 1 < n && l->recorded; i++) *ro++ = sLrec[idx[0]], *ro++ = sLrec[idx[i]], *ro++ = sLrec[idx[i + 1]];
     l->nv += (n - 2) * 3;
     b->count += (n - 2) * 3;
 }
@@ -392,7 +407,14 @@ int g3p_gpu_draw(u32 first, u32 count, const G3GDraw *d, u32 attr, u32 texparam,
     memcpy(b->vx, sVx, sizeof sVx), memcpy(b->vy, sVy, sizeof sVy);
     l->draw[l->ndraw] = *d;
     b->gpu = ++l->ndraw;
+    b->seg = NO_SEG;
     return 1;
+}
+// the clip matrix (g3p_matrix's id) of the draw g3p_gpu_draw made last, for the pictures between: render() draws it
+// through its matrix moved from the paired one (Seg.m0) as replay() moves the CPU's vertices
+void g3p_gpu_seg(int seg) {
+    List *l = &sList[sFill];
+    if (l->nbatch && l->batch[l->nbatch - 1].gpu) l->batch[l->nbatch - 1].seg = (u16)seg;
 }
 
 // the draw g3p_gpu_draw made last goes on with the next count indices (the caller knows nothing changed since)

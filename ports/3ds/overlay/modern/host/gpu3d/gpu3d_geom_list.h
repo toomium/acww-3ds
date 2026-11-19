@@ -494,6 +494,7 @@ static int dl_box_out(const DlPiece *pc) {
 }
 
 // the piece as a draw; 0: the CPU's way
+void g3p_gpu_seg(int seg);  // (gpu3d_pica.c: the matrix of the draw made last, for the pictures between)
 static int dl_piece_gpu(const DlPiece *pc) {
     u32 attr = sCurPolyAttr, pa = attr >> 16 & 31;
     if (!pc->gcount || !(attr & 0xc0)) return 1;  // (nothing to draw, or neither side is)
@@ -529,9 +530,18 @@ static int dl_piece_gpu(const DlPiece *pc) {
         d.clip[4 * i + 3] = (float)sClip.m[12 + i] * (1 / 4096.0f);
     }
     int fmt = sTexParam >> 26 & 7;
+    // (a list with the pictures between: its matrix as the CPU's vertices name theirs, gpu3d_geom.c, so that it is
+    // paired with the picture before's whichever path drew that)
+    if (sSeg < 0) sSeg = g3p_matrix(sClip.m);
+    if (g3p_recorded())
+        for (u32 j = 0; j < pc->nvtx && j < 4; j++) {
+            const s32 obj[3] = {pc->vtx[j].xyz[0], pc->vtx[j].xyz[1], pc->vtx[j].xyz[2]};
+            g3p_vertex(sSeg, obj);
+        }
     DL_T(3);
     int r = g3p_gpu_draw(pc->gfirst, pc->gcount, &d, attr, sTexParam, sTexPal, (pa > 0 && pa < 31) || fmt == 1 || fmt == 6,
                          sFlushParam >> 1 & 1);
+    if (r) g3p_gpu_seg(sSeg);
     DL_T(4);
     return r;
 }
@@ -732,7 +742,9 @@ static int dl_try(const u32 *v, u32 n, u32 pre) {
     dl_options();
     if ((!sDlOn && !sDlStats) || sDlBusy) return 0;
     if (sBenchSkip & 16) { if (pre) sPackCmds = 0, sPackLeft = 0, sPackParamsLeft = 0; return 1; }  // (ACWW_G3D_BENCH: the lists left out, to time what is outside them)
-    if (sBenchSkip || (sTexParam >> 30) >= 2 || g3p_recorded()) { sDlStat.old++; return 0; }
+    // (a list with the pictures between too: g3p_list_vertices records the CPU's vertices, dl_piece_gpu the GPU's
+    // matrices)
+    if (sBenchSkip || (sTexParam >> 30) >= 2) { sDlStat.old++; return 0; }
     if (sDlSplit) sDlMark = host_plat_ticks();
     DlEntry *e = dl_entry(v, n, pre);
     if (!e || !sDlOn || !dl_scratch(e)) return 0;
