@@ -29,6 +29,9 @@ int Port_LangEur(void);
 // "New Leaf controls" switched on: Y picks up and pulls weeds (B on the DS), B only runs, X opens the pockets (Y on the
 // DS) and the map has no key (its touch button stays)
 int port_new_leaf_controls(void);
+// the wide view's ranges (src/ov003, ov009, ov068: the trees, buildings and villagers out to the picture's sides) widened:
+// the wide view on and ACWW_WIDE_RANGES not 0 (plat_3ds.c sets 0 on an Old 3DS: they cost it 2-4 fps)
+int port_wide_ranges(void);
 static inline unsigned port_key_pick_up(void) { return port_new_leaf_controls() ? 0x800 : 0x2; }   // Y : B
 static inline unsigned port_key_pockets(void) { return port_new_leaf_controls() ? 0x400 : 0x800; } // X : Y
 
