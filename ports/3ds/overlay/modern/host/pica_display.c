@@ -146,6 +146,32 @@ static void wait_done(int last, int kind, int older) {
 }
 void pdisp_wait(int kind, int older) { wait_done(0, kind, older); }
 static void frame_close(void);
+// ACWW_PICA_TIMES=1: the wall-clock time of the compositing's calls that go through the GSP (the system's GPU service,
+// on core 1 beside the sound), ms a composited frame and calls, every 120 composited frames. The ACWW_FPS profile's
+// sampler runs on core 1 too, so its parts can't show this (old3ds-test 77: compose 0.76 ms less, the compositing's
+// wall time the same)
+enum { PT_BEGIN, PT_UPLOAD, PT_WRITTEN, PT_STOP, PT_FEND, PT_FLUSH, PT_JOB, PT_N };
+static int sTimes = -1;
+static u64 sTimeSum[PT_N], sTimeJob;
+static u32 sTimeCalls[PT_N];
+static u64 times_now(void) { return sTimes > 0 ? svcGetSystemTick() : 0; }
+static void times_add(int k, u64 t0) {
+    if (sTimes <= 0) return;
+    sTimeSum[k] += svcGetSystemTick() - t0;
+    sTimeCalls[k]++;
+}
+static void times_report(void) {
+    static const char *const kName[PT_N] = {"frame begin", "uploads", "textures written", "waiting for the GPU",
+                                            "C3D_FrameEnd", "vertices flushed", "begin to end"};
+    if (sTimes <= 0 || sTimeCalls[PT_JOB] < 120) return;
+    char line[400];
+    int n = snprintf(line, sizeof line, "pica times, ms a composited frame (calls):");
+    for (int k = 0; k < PT_N && n < (int)sizeof line; k++)
+        n += snprintf(line + n, sizeof line - (size_t)n, " %s %.2f (%lu)", kName[k],
+                      (double)sTimeSum[k] / SYSCLOCK_ARM11 * 1000 / sTimeCalls[PT_JOB], (unsigned long)sTimeCalls[k]);
+    fprintf(stderr, "%s\n", line);
+    memset(sTimeSum, 0, sizeof sTimeSum), memset(sTimeCalls, 0, sizeof sTimeCalls);
+}
 // (citro3d is the game's thread's after this: a frame a 3D job left open ended)
 void pdisp_idle(void) {
     wait_done(1, 0, 0);
@@ -268,7 +294,9 @@ static void frame_stop(void) {
     gxCmdQueue_s *q = (gxCmdQueue_s *)__C3D_Context;
     {
         HOST_PROF_ON(gPicaProf, PROF_GPU);
+        u64 t0 = times_now();
         gxCmdQueueWait(q, -1);
+        times_add(PT_STOP, t0);
     }
     gxCmdQueueStop(q);  // (not running: the queue let go at once)
     sRunning = 0;
@@ -278,7 +306,9 @@ static void frame_close(void) {
     frame_stop();
     {
         HOST_PROF_ON(gPicaProf, PROF_FEND);
+        u64 t0 = times_now();
         C3D_FrameEnd(0);
+        times_add(PT_FEND, t0);
     }
     sOpen = 0;
     // ACWW_PICA_STATS: the most GX queue entries a frame took, every 300 frames ended (the queue is cleared only at
@@ -396,7 +426,9 @@ void cg_tex_free(CgTex *t) {
 void *cg_tex_texels(CgTex *t) { return t->staged ? t->stage.data : t->tex.data; }
 void cg_tex_written(CgTex *t) {
     if (!t->staged) {
+        u64 t0 = times_now();
         C3D_TexFlush(&t->tex);
+        times_add(PT_WRITTEN, t0);
         return;
     }
     C3D_TexFlush(&t->stage);  // (the GPU copies it to VRAM: C3D_SyncTextureCopy)
@@ -410,10 +442,12 @@ void cg_tex_repeat(CgTex *t, int on) {
 void cg_tex_upload(CgTex *t, const void *src, int w, int rows, int fmt) {
     GX_TRANSFER_FORMAT f = fmt == CG_RGBA5551 ? GX_TRANSFER_FMT_RGB5A1 : GX_TRANSFER_FMT_RGBA8;
     u32 dim = GX_BUFFER_DIM(w, rows);
+    u64 t0 = times_now();
     GSPGPU_FlushDataCache(src, (u32)(w * rows * (fmt == CG_RGBA5551 ? 2 : 4)));
     frame_flush_commands();
     HOST_PROF_ON(gPicaProf, PROF_UPLOAD);
     C3D_SyncDisplayTransfer((u32 *)src, dim, t->tex.data, dim, kLinearToTiled | GX_TRANSFER_IN_FORMAT(f) | GX_TRANSFER_OUT_FORMAT(f));
+    times_add(PT_UPLOAD, t0);
 }
 CgTex *cg_tex_picture(void *texture3d) { return (CgTex *)texture3d; }  // (a C3D_Tex: its `tex`, the same pointer)
 void *cg_alloc(uint32_t bytes) { return linearAlloc(bytes); }
@@ -489,7 +523,13 @@ CgTex *cg_target_tex(int which) {
 int cg_screens(void) { return sScreen[0] && sScreen[1]; }
 int cg_screen_stencil(void) { return sScreenStencil; }
 
-void cg_frame_begin(void) { pdisp_frame_open(PDISP_COMP); }  // (begun by this frame's 3D job, or here)
+void cg_frame_begin(void) {  // (begun by this frame's 3D job, or here)
+    if (sTimes < 0) sTimes = getenv("ACWW_PICA_TIMES") && atoi(getenv("ACWW_PICA_TIMES"));
+    sTimeJob = times_now();
+    u64 t0 = sTimeJob;
+    pdisp_frame_open(PDISP_COMP);
+    times_add(PT_BEGIN, t0);
+}
 void cg_draw_begin(void) {
     C3D_BindProgram(&sProgram);
     C3D_AttrInfo *ai = C3D_GetAttrInfo();
@@ -505,8 +545,12 @@ void cg_draw_begin(void) {
     C3D_DepthMap(true, -1.0f, 0.0f);
 }
 void cg_frame_end(int nverts) {
+    u64 t0 = times_now();
     GSPGPU_FlushDataCache(sV, (u32)nverts * sizeof(CgVertex));
+    times_add(PT_FLUSH, t0);
     frame_close();
+    times_add(PT_JOB, sTimeJob);
+    times_report();
 }
 
 // screen s's picture as drawn (its target read back: 240 x its width, a turned target's rows being the screen's
