@@ -1,39 +1,45 @@
 From: acww-3ds <noreply@invalid>
-Subject: [PATCH] Switch: villagers walk as seen across the whole wide view
+Subject: [PATCH] Wide view: villagers walk as seen across the whole picture
 
 A villager walks as seen only inside a rectangle around the camera (FieldVillagerAi::focusRange: 8 units to each
-side, 13 back, 5 in front, the DS's picture); outside it (execOffscreen) it only steps along its route. In the
-Switch's 426 x 240 wide view that rectangle ended inside the picture, and villagers there jumped, came in and went
-out. With the wide view it widens with the picture (x 213/128, z 120/96, a unit more). The 3DS is unchanged.
+side, 13 back, 5 in front, the DS's picture); outside it (execOffscreen) it only steps along its route. In the wide
+view (the 3DS's 400 x 240, the Switch's 426 x 240) that rectangle ended inside the picture, and villagers there
+jumped, came in and went out. With the wide view it widens with the picture (x (128 + GPU3D_WIDE_X) / 128, z
+120/96, a unit more).
 ---
- src/ov068/unk_ov068_0225f1a0.cpp | 14 ++++++++++++++
- 1 file changed, 14 insertions(+)
+ src/ov068/unk_ov068_0225f1a0.cpp | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
 
 diff --git a/src/ov068/unk_ov068_0225f1a0.cpp b/src/ov068/unk_ov068_0225f1a0.cpp
-index 2310178..a9a36a2 100644
+index 2310178..dd9ecea 100644
 --- a/src/ov068/unk_ov068_0225f1a0.cpp
 +++ b/src/ov068/unk_ov068_0225f1a0.cpp
 @@ -2204,6 +2204,10 @@ BOOL FieldVillager::updateAct() {
      return TRUE;
  }
  
-+#if defined(ENHANCED_PORT) && defined(__SWITCH__)
++#ifdef ENHANCED_PORT
 +extern "C" int gpu3d_wide_wanted(void);  // (modern/host/gpu3d/gpu3d_geom.c: ACWW_WIDE)
 +#endif
 +
  FieldVillagerAi *FieldVillagerAi::initAi() {
      using namespace ns_02265324;
      route.resetTarget();
-@@ -2213,6 +2217,16 @@ FieldVillagerAi *FieldVillagerAi::initAi() {
+@@ -2213,6 +2217,21 @@ FieldVillagerAi *FieldVillagerAi::initAi() {
      focusRange.posX = 0x10000;
      focusRange.negZ = 0x1a000;
      focusRange.posZ = 0xa000;
-+#if defined(ENHANCED_PORT) && defined(__SWITCH__)
-+    // The Switch's wide view (426 x 240 around the DS's 256 x 192: gpu3d.h GPU3D_WIDE_X 85, Y 24): the rectangle
++#ifdef ENHANCED_PORT
++    // The wide view (the 3DS's 400 x 240 or the Switch's 426 x 240 around the DS's 256 x 192): the rectangle
 +    // around the camera in which a villager walks as seen (outside it only steps along its route: execOffscreen)
 +    // widened with the picture and a unit more, else in the margins villagers jumped, came in and went out
 +    if (gpu3d_wide_wanted()) {
-+        focusRange.negX = focusRange.posX = 0x10000 * (128 + 85) / 128 + 0x2000;
++#ifdef __SWITCH__
++        const s32 wx = 85;  // (gpu3d.h GPU3D_WIDE_X: the Switch's 426 x 240)
++#else
++        const s32 wx = 72;  // (the 3DS's top screen, 400 x 240)
++#endif
++        focusRange.negX = focusRange.posX = 0x10000 * (128 + wx) / 128 + 0x2000;
 +        focusRange.negZ = 0x1a000 * (96 + 24) / 96 + 0x2000;
 +        focusRange.posZ = 0xa000 * (96 + 24) / 96 + 0x2000;
 +    }
