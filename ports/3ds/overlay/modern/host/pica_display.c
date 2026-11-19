@@ -118,9 +118,21 @@ static void start_worker(void) {
     CondVar_Init(&sChanged);
     s32 prio = 0x30;
     svcGetThreadPriority(&prio, CUR_THREAD_HANDLE);
-    sWorker = threadCreate(worker, 0, 64 * 1024, prio, 2, true);
+    int core = 2;
+    sWorker = threadCreate(worker, 0, 64 * 1024, prio, core, true);
+    // ACWW_PICA_THREAD=1 on an Old 3DS (a trial, not the default): core 1 at ACWW_CORE1_LIMIT percent (80 unless set;
+    // the sound's thread shares it, plat_3ds.c sets the same share). shortcut: unmeasured; make it the Old 3DS's
+    // default only if the console's log shows more fps and no sound running dry
+    if (!sWorker && e && atoi(e) == 1) {
+        if (!getenv("ACWW_CORE1_LIMIT")) setenv("ACWW_CORE1_LIMIT", "80", 0);
+        int pct = atoi(getenv("ACWW_CORE1_LIMIT"));
+        Result r = APT_SetAppCpuTimeLimit((u32)(pct < 5 ? 5 : pct > 89 ? 89 : pct));
+        fprintf(stderr, "3ds: APT_SetAppCpuTimeLimit(%d) for the GPU work: %08lx\n", pct, (unsigned long)r);
+        sWorker = threadCreate(worker, 0, 64 * 1024, prio, core = 1, true);
+    }
     if (sWorker) gPicaProf = &gHostProfWorker;
-    fprintf(stderr, "3ds: the GPU work %s\n", sWorker ? "on core 2" : "on the game's core (no core 2)");
+    if (sWorker) fprintf(stderr, "3ds: the GPU work on core %d\n", core);
+    else fprintf(stderr, "3ds: the GPU work on the game's core (no core 2)\n");
 }
 static void wait_done(int last, int kind, int older) {
     if (!sWorker) return;

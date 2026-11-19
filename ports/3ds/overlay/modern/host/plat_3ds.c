@@ -142,6 +142,10 @@ void host_plat_init(void) {
     // (ACWW_FRAMESKIP=sync and ACWW_WIDE=0 are not the Old 3DS's defaults: sync leaves out pictures that change,
     // and the wide screens off were slower, 33.2 against 34.8, 48 against 47)
     setenv("ACWW_G3D_GPU", "1", 0);
+    // the Old 3DS's sound thread on core 1 at 50 % of it: at 30 the queue ran dry 55 times in the intro (a hang heard),
+    // at 50 7 times for 39.6 fps against 40.3; at 80 never, but 33.4 fps (the screens' compositing 3.0 -> 6.7 ms: the
+    // more of core 1 the application has, the later the system's GPU work there, unverified). old3ds-test 60, 65, 64.
+    if (!n3ds) setenv("ACWW_CORE1_LIMIT", "50", 0);
 #endif
     osSetSpeedupEnable(true);  // (the New 3DS: 804 MHz and its L2 cache instead of 268 MHz; nothing on the others)
     fprintf(stderr, "3ds: %s, application memory %lu KB (%lu KB free), heap %lu KB, linear heap %lu KB\n",
@@ -278,7 +282,7 @@ int host_plat_thread_start(void (*fn)(void *), void *arg) {
 // APT_SetAppCpuTimeLimit); else on the game's core at a higher priority (the kernel switches to it when its sleep
 // ends). The core is logged, to show whether the program can use one beside the game's. ACWW_CORE1_LIMIT=<percent>:
 // core 1's share for the application, 5 to 89 (3dbrew: APT:SetApplicationCpuTimeLimit; the maximum depends on the
-// exheader), default 30.
+// exheader), default 30 (the Old 3DS: 50, set at the start).
 int host_plat_sampler_start(void (*fn)(void *), void *arg, int core1) {
     int pct = getenv("ACWW_CORE1_LIMIT") ? atoi(getenv("ACWW_CORE1_LIMIT")) : 30;
     pct = pct < 5 ? 5 : pct > 89 ? 89 : pct;
