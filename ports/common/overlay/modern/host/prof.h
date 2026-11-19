@@ -23,6 +23,8 @@ enum {
     // (the ports' 2D: the sprites made, the layers compared with the frame before's, gpu2d_draw_layers; the record's
     // start and end, gpu2d_render_frame; the layers' quads, comp2d.c compose)
     PROF_SPRITES, PROF_KEEP, PROF_RECORD, PROF_COMPOSE,
+    PROF_EVENTS,  // the hardware's events as time passes (hw.c run_events: the sound's and the PXI's, the V-blank)
+    PROF_DL,      // (the 3DS: the game's display lists, gpu3d_geom_list.h dl_try)
     PROF_N
 };
 extern volatile int gHostProf;

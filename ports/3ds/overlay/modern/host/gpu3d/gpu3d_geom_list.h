@@ -739,6 +739,7 @@ static void dl_check(const DlEntry *e, const u32 *v, u32 n) {
 // whether the block is a list of the converted kind, and if so run: 1 (the block is done), else 0 (the old path
 // decodes it). pre: the command word written before the block, 0 none.
 static int dl_try(const u32 *v, u32 n, u32 pre) {
+    HOST_PROF(PROF_DL);
     dl_options();
     if ((!sDlOn && !sDlStats) || sDlBusy) return 0;
     if (sBenchSkip & 16) { if (pre) sPackCmds = 0, sPackLeft = 0, sPackParamsLeft = 0; return 1; }  // (ACWW_G3D_BENCH: the lists left out, to time what is outside them)

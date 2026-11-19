@@ -1,17 +1,20 @@
-From ba39e79d5368dab4ed5517eed5f5d9240effdb08 Mon Sep 17 00:00:00 2001
+From f8ef4dd550abcd75c14ac46da9c4f9985412cf08 Mon Sep 17 00:00:00 2001
 From: toomium <tom.mittendorf@web.de>
 Date: Thu, 19 Nov 2026 18:09:17 +0100
-Subject: [PATCH] Profile: the ports' 2D in more parts (sprites, layers
- compared, 2D record, compose)
+Subject: [PATCH] Profile: the ports' 2D in more parts, the events and the
+ display lists
 
 ACWW_FPS's profile had the 2D's work in three parts, 2D (the record), 2D layers and compositing. Four more, so that
 the console shows where it goes: sprites (gpu2d_obj_sprites), layers compared (layers_keep, cpu_bg), 2D record (the
 record's start and end) and compose (comp2d.c's quads). The Old 3DS (old3ds-test 75, frames 3720-8400): layers
 compared 1.78, compose 2.41, 2D record 0.70, sprites 0.47 ms a frame.
+
+Two more: events (run_events: the sound's and the PXI's events and the V-blank, which ran inside a register
+access and counted as "registers") and display lists (the 3DS's dl_try, which counted as "geometry").
 ---
  modern/host/gpu2d/gpu2d.c | 22 +++++++++++++++++++---
- modern/host/hw.c          |  3 ++-
- 2 files changed, 21 insertions(+), 4 deletions(-)
+ modern/host/hw.c          |  5 ++++-
+ 2 files changed, 23 insertions(+), 4 deletions(-)
 
 diff --git a/modern/host/gpu2d/gpu2d.c b/modern/host/gpu2d/gpu2d.c
 index c8121aa..1091d93 100644
@@ -83,19 +86,28 @@ index c8121aa..1091d93 100644
          sFrame++;
          return;
 diff --git a/modern/host/hw.c b/modern/host/hw.c
-index 36c36a5..f7e7134 100644
+index 36c36a5..97cea78 100644
 --- a/modern/host/hw.c
 +++ b/modern/host/hw.c
-@@ -132,7 +132,8 @@ static const char *const kProfNames[PROF_N] = {"game", "registers", "DMA", "geom
+@@ -132,7 +132,9 @@ static const char *const kProfNames[PROF_N] = {"game", "registers", "DMA", "geom
                                                 "sound", "frontend", "pacing", "GPU wait", "lighting",
                                                 "vertices", "waiting for the GPU thread", "idle", "ROM",
                                                 "ARM7", "uploads", "VRAM", "BG tiles", "screen hash", "frame end",
 -                                               "2D layers", "matrices", "polygons", "fog"};
 +                                               "2D layers", "matrices", "polygons", "fog",
-+                                               "sprites", "layers compared", "2D record", "compose"};
++                                               "sprites", "layers compared", "2D record", "compose", "events",
++                                               "display lists"};
  // the slowest frame of the 120: the parts the sampler saw in it (milliseconds), the game's thread and the GPU thread
  static u32 sProfAt[2][PROF_N], sProfSlowest[2][PROF_N];
  static void prof_frame(int slowest) {
+@@ -334,6 +336,7 @@ static int sInEvents;
+ static void run_events_body(void);
+ static void run_events(void) {
+     if (sInEvents) return;  // (a register access from inside the event handling)
++    HOST_PROF(PROF_EVENTS);
+     sInEvents = 1;
+     sTimeless = 0;
+     run_events_body();
 -- 
 2.43.0
 
