@@ -1009,11 +1009,45 @@ static int screen_unchanged(int s, int e, u32 used, u32 cpuBg, const void *textu
     }
     int same = !cpu && sProbe <= 0 && h == last[s] && sBgDrawn == drawnBefore;
     last[s] = cpu ? 0 : h;
+    // ACWW_PICA_STATS: what changed in the frames a screen is drawn again (each part's own hash), every 300 frames
+    enum { PARTS = 7 };
+    static const char *const kPart[PARTS] = {"3D picture", "lines", "reference points", "effects", "BG textures", "OBJs", "rest"};
+    static u32 lastPart[2][PARTS], changed[2][PARTS], unhashed[2];
+    if (sStats > 0 && cpu) unhashed[s]++;
+    if (sStats > 0 && !cpu) {
+        u32 part[PARTS];
+        part[0] = with3d ? hash32(0, &texture3d, sizeof texture3d) : 0;
+        part[1] = hash32(0, L->line[e], sizeof L->line[e]);
+        part[2] = hash32(0, L->ref[e], sizeof L->ref[e]);
+        part[3] = hash32(0, L->objPrio[e], sizeof L->objPrio[e]);
+#ifdef ENHANCED_PORT
+        part[3] = hash32(part[3], &L->margin[e], sizeof L->margin[e]);
+        part[3] = hash32(part[3], &L->iris, sizeof L->iris);
+        part[3] = hash32(part[3], &L->menuWipe, sizeof L->menuWipe);
+        part[3] = hash32(part[3], &L->bgAnchor[e], sizeof L->bgAnchor[e]);
+#endif
+        part[4] = sBgDrawn - drawnBefore;
+        part[5] = hash32(0, L->sprites[e], (size_t)L->nsprites[e] * sizeof L->sprites[e][0]) ^ (u32)L->nsprites[e];
+        part[6] = h;
+        for (int k = 0; k < PARTS && !same; k++)
+            changed[s][k] += k == 4 ? part[4] != 0 : part[k] != lastPart[s][k];
+        memcpy(lastPart[s], part, sizeof part);
+    }
     static u32 frames, skipped[2];  // (ACWW_PICA_STATS: how often, every 300 frames)
     skipped[s] += (u32)same;
     if (s == 1 && sStats > 0 && ++frames % 300 == 0) {
         fprintf(stderr, "pica: the top screen drawn again in %lu of 300 frames, the bottom one in %lu\n",
                 (unsigned long)(300 - skipped[0]), (unsigned long)(300 - skipped[1]));
+        for (int t = 0; t < 2; t++) {  // ("rest": any change; a frame counts in each part that changed)
+            char buf[320];
+            int at = snprintf(buf, sizeof buf, "pica: the %s screen drawn again: without a hash (CPU layers, 3D) %lu;",
+                              t ? "bottom" : "top", (unsigned long)unhashed[t]);
+            for (int k = 0; k < PARTS && at > 0 && at < (int)sizeof buf; k++)
+                at += snprintf(buf + at, sizeof buf - (size_t)at, " %s %lu", kPart[k], (unsigned long)changed[t][k]);
+            fprintf(stderr, "%s\n", buf);
+            memset(changed[t], 0, sizeof changed[t]);
+            unhashed[t] = 0;
+        }
         skipped[0] = skipped[1] = 0;
     }
     return same;
