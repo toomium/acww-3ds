@@ -493,13 +493,16 @@ static void sprite_rect(const Gpu2dSprite *s, int y0, int y1) {
         rect((float)x0 + dx, (float)y0 + dy, (float)x1 + dx, (float)y1 + dy, (float)(s->u + x0 - s->x) / GPU2D_ATLAS_W,
              (float)(s->u + x1 - s->x) / GPU2D_ATLAS_W, (float)(s->v + y0 - s->y), GPU2D_ATLAS_H, 0);
 }
+// (the pieces a pass draws: [sPiece0, sPiece1) of the group's; all but in layer()'s blended pass, a draw for each
+// BLDALPHA of the group's pieces)
+static int sPiece0, sPiece1 = 1 << 30;
 // the sprites of priority sObjPrio in the group's pieces: the later in OAM first, so that the earlier is in front
 static void sprite_quads(const Group *g) {
     const Gpu2dSprite *sp = sLayers.sprites[g->engine];
     for (int k = sLayers.nsprites[g->engine] - 1; k >= 0; k--) {
         const Gpu2dSprite *s = &sp[k];
         if (s->prio != sObjPrio || s->window) continue;
-        for (int i = 0; i < g->n; i++) {
+        for (int i = sPiece0; i < g->n && i < sPiece1; i++) {
             int y0 = s->y > g->y0[i] ? s->y : g->y0[i], y1 = s->y + s->h < g->y1[i] ? s->y + s->h : g->y1[i];
             if (y1 > y0) sprite_rect(s, y0, y1);
         }
@@ -508,7 +511,7 @@ static void sprite_quads(const Group *g) {
 static void layer_pass(const Group *g, int l, int is3d, const BgTex *b) {
     begin();
     if (l == 4 && sLayers.sprite) sprite_quads(g);
-    for (int i = 0; i < g->n && !(l == 4 && sLayers.sprite); i++) {
+    for (int i = sPiece0; i < g->n && i < sPiece1 && !(l == 4 && sLayers.sprite); i++) {
         if (l != 4) { layer_quad(g, i, l, is3d, b); continue; }
         const u8 *has = sLayers.objPrio[g->engine];
         for (int y0 = g->y0[i], y1; y0 < g->y1[i]; y0 = y1) {
@@ -533,8 +536,6 @@ static int obj_lines(const Group *g, int prio) {
 static void layer(const Group *g, int l, int prio, int is3d, u32 rref, u32 rmask) {
     const Gpu2dLineState *s = g->s;
     u32 bld = s->bldcnt, effect = bld >> 6 & 3, first = bld >> l & 1, second = bld >> (8 + l) & 1;
-    u32 eva = s->bldalpha & 31, evb = s->bldalpha >> 8 & 31;
-    eva = eva > 16 ? 16 : eva, evb = evb > 16 ? 16 : evb;
     if (l == 4 && !obj_lines(g, prio)) return;  // (nothing of it to draw)
     sObjPrio = prio;
     if (l == 4 && !sLayers.sprite) cg_alpha_test(CG_EQUAL, (prio + 1) * 32);
@@ -562,14 +563,21 @@ static void layer(const Group *g, int l, int prio, int is3d, u32 rref, u32 rmask
     // blended, and marked (bit 5); elsewhere as it is; then what this layer is, where it is
     u32 cond = blend3d ? 1 : 5;
     stencil(CG_EQUAL, rref | 1 | 0x20, rmask | cond, 0x20);
+    sTag = ST_BLEND;
     if (blend3d) {
         cg_blend(s3dPremultiplied ? CG_OVER : CG_ALPHA, 0, 0);
+        layer_pass(g, l, is3d, b);
     } else {
-        // (the constant colour's red, green and blue are eva / 16, its alpha evb / 16: R in the low byte)
-        cg_blend(CG_CONSTANT, eva, evb);
+        // (the constant colour's red, green and blue are eva / 16, its alpha evb / 16: R in the low byte; a draw for
+        // each run of pieces with one BLDALPHA - the town's horizon fades it line by line, same_gpu_state)
+        for (sPiece0 = 0; sPiece0 < g->n; sPiece0 = sPiece1) {
+            u32 ba = piece_state(g, sPiece0)->bldalpha, eva = ba & 31, evb = ba >> 8 & 31;
+            for (sPiece1 = sPiece0 + 1; sPiece1 < g->n && piece_state(g, sPiece1)->bldalpha == ba; sPiece1++) {}
+            cg_blend(CG_CONSTANT, eva > 16 ? 16 : eva, evb > 16 ? 16 : evb);
+            layer_pass(g, l, is3d, b);
+        }
+        sPiece0 = 0, sPiece1 = 1 << 30;
     }
-    sTag = ST_BLEND;
-    layer_pass(g, l, is3d, b);
     if (!sAllSecond) {
         stencil(CG_EQUAL, rref, rmask | 0x20, 0);
         // (the GPU's premultiplied 3D picture over what is below elsewhere too: its colour alone is darkened where its
@@ -775,11 +783,13 @@ static int same_run(int e, int y) {
     return 1;
 }
 
-// the state the GPU is set up with for a line: what is not vertex data
+// the state the GPU is set up with for a line: what is not vertex data (BLDALPHA may differ: layer() draws a run of
+// pieces with one at a time; the town's horizon changes it on each of 18 lines, which were 18 groups, each with its
+// backdrop and passes)
 static int same_gpu_state(const Gpu2dLineState *a, const Gpu2dLineState *b) {
     return a->dispcnt == b->dispcnt && a->gpuBg == b->gpuBg && !memcmp(a->bgKind, b->bgKind, sizeof a->bgKind) &&
            !memcmp(a->bgcnt, b->bgcnt, sizeof a->bgcnt) && !memcmp(a->prio, b->prio, sizeof a->prio) &&
-           a->bldcnt == b->bldcnt && a->bldalpha == b->bldalpha && a->winin == b->winin && a->winout == b->winout &&
+           a->bldcnt == b->bldcnt && a->winin == b->winin && a->winout == b->winout &&
            a->white == b->white;
 }
 
